@@ -1,0 +1,267 @@
+/* ============================================================
+   Pronto Base  —  v1
+   Shared page template + core UI for Pronto tools.
+   Scope: design tokens, page shell, cards, buttons, chips,
+   tabs, inputs, tables. Nothing tool-specific belongs here.
+   Consumers: load via /base/v1/loader.js (injects this file),
+   then add their own tool CSS on top.
+   Class prefix: .pp-   Token prefix: --pp-
+   ============================================================ */
+
+/* ---- 1. Design tokens ------------------------------------ */
+:root {
+  /* Brand */
+  --pp-red: #ed0007;            /* Havas red */
+  --pp-red-dark: #b50005;
+  --pp-primary: #4f46e5;        /* action buttons (e.g. Create Review) */
+  --pp-primary-dark: #4338ca;
+
+  /* Ink & surfaces (measured from live havaspronto.com, Jul 2026) */
+  --pp-ink: #18181a;
+  --pp-ink-soft: #4b5563;
+  --pp-muted: #8a94a1;
+  --pp-bg: #f2f3f5;             /* page background */
+  --pp-surface: #ffffff;
+  --pp-line: #e5e8ec;
+  --pp-line-soft: #eef0f3;
+  --pp-line-strong: #cac9cc;    /* input/menu borders on the live site */
+
+  /* Status */
+  --pp-ok: #2fb344;             /* "Please Start" green */
+  --pp-progress: #e5457b;       /* "In Progress" pink */
+  --pp-warn: #e8a33d;
+  --pp-bad: #d64545;
+
+  /* Shape & depth */
+  --pp-radius: 4px;
+  --pp-radius-sm: 4px;
+  --pp-shadow: 0 1px 3px rgba(16, 24, 40, .07);
+  --pp-shadow-pop: 0 8px 28px rgba(16, 24, 40, .16);
+  --pp-focus: 0 0 0 3px rgba(79, 70, 229, .18);
+
+  /* Layout (live nav: 56px bar, 40px page gutter, 200x22 logo) */
+  --pp-gutter: 40px;
+  --pp-nav-h: 56px;
+  --pp-logo-h: 22px;
+
+  /* Type — the live site uses Lato throughout (loader injects the font) */
+  --pp-font: "Lato", -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* ---- 2. Base / reset-lite --------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body {
+  font: 14px/1.5 var(--pp-font);
+  color: var(--pp-ink);
+  background: var(--pp-bg);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--pp-primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+h1, h2, h3, h4 { margin: 0 0 .5em; line-height: 1.25; }
+
+/* ---- 3. Page shell ---------------------------------------- */
+.pp-page {                       /* main content wrapper below nav/banner */
+  padding: 0 var(--pp-gutter) var(--pp-gutter);
+  max-width: 1920px;
+  margin: 0 auto;
+}
+.pp-grid {                       /* simple responsive card grid */
+  display: grid;
+  gap: 22px;
+  grid-template-columns: repeat(12, 1fr);
+  align-items: start;
+}
+.pp-col-3 { grid-column: span 3; }
+.pp-col-4 { grid-column: span 4; }
+.pp-col-6 { grid-column: span 6; }
+.pp-col-8 { grid-column: span 8; }
+.pp-col-12 { grid-column: span 12; }
+@media (max-width: 1100px) {
+  .pp-col-3, .pp-col-4, .pp-col-6, .pp-col-8 { grid-column: span 12; }
+}
+
+/* ---- 4. Cards / panels ------------------------------------ */
+.pp-card {
+  background: var(--pp-surface);
+  border: 1px solid var(--pp-line);
+  border-radius: var(--pp-radius);
+  box-shadow: var(--pp-shadow);
+  overflow: hidden;
+}
+.pp-card-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 18px 20px 14px;
+}
+.pp-card-title {
+  font-size: 14px; font-weight: 700;
+  letter-spacing: .8px; text-transform: uppercase;
+}
+.pp-card-head .pp-spacer, .pp-spacer { margin-left: auto; }
+.pp-card-body { padding: 4px 20px 20px; }
+.pp-card-body--flush { padding: 0; }
+
+/* Feature card (dark-blue "Welcome" style panel) */
+.pp-card--feature {
+  background: #23527c;
+  border-color: #23527c;
+  color: #fff;
+}
+.pp-card--feature .pp-card-title { color: #fff; }
+.pp-card--feature a { color: #fff; }
+
+/* Link rows inside a feature card */
+.pp-linkrow {
+  display: flex; align-items: center; justify-content: space-between;
+  background: rgba(255, 255, 255, .08);
+  border: 1px solid rgba(255, 255, 255, .25);
+  border-radius: var(--pp-radius-sm);
+  color: #fff; font-weight: 600; font-size: 13.5px;
+  padding: 12px 14px; margin-top: 10px; cursor: pointer;
+  transition: background .15s;
+}
+.pp-linkrow:hover { background: rgba(255, 255, 255, .16); text-decoration: none; }
+.pp-linkrow::after { content: "\2192"; font-size: 15px; }
+
+/* ---- 5. Buttons -------------------------------------------- */
+.pp-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  border: 1px solid var(--pp-line);
+  background: var(--pp-surface); color: var(--pp-ink);
+  font: 600 13px/1 var(--pp-font);
+  padding: 9px 15px; border-radius: var(--pp-radius-sm);
+  cursor: pointer; white-space: nowrap;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.pp-btn:hover { border-color: #c9cfd7; background: #fafbfc; text-decoration: none; }
+.pp-btn:focus-visible { outline: none; box-shadow: var(--pp-focus); }
+.pp-btn--primary { background: var(--pp-primary); border-color: var(--pp-primary); color: #fff; }
+.pp-btn--primary:hover { background: var(--pp-primary-dark); border-color: var(--pp-primary-dark); }
+.pp-btn--danger { background: var(--pp-red); border-color: var(--pp-red); color: #fff; }
+.pp-btn--danger:hover { background: var(--pp-red-dark); border-color: var(--pp-red-dark); }
+.pp-btn--ghost { background: transparent; border-color: transparent; color: var(--pp-ink-soft); }
+.pp-btn--ghost:hover { background: rgba(0, 0, 0, .05); border-color: transparent; }
+.pp-btn--pill { border-radius: 999px; }
+.pp-btn--sm { padding: 6px 11px; font-size: 12.5px; }
+.pp-btn[disabled] { opacity: .55; cursor: not-allowed; }
+
+/* Icon-only button (kebab menus, close, etc.) */
+.pp-iconbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: var(--pp-radius-sm);
+  border: 1px solid transparent; background: transparent;
+  color: var(--pp-ink-soft); cursor: pointer; font-size: 15px;
+}
+.pp-iconbtn:hover { background: rgba(0, 0, 0, .06); }
+.pp-iconbtn--boxed { border-color: var(--pp-line); background: var(--pp-surface); }
+
+/* ---- 6. Chips / status badges ------------------------------ */
+.pp-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: 700 11.5px/1 var(--pp-font);
+  padding: 6px 12px; border-radius: 999px;
+  background: var(--pp-line-soft); color: var(--pp-ink-soft);
+  white-space: nowrap;
+}
+.pp-chip--ok { background: var(--pp-ok); color: #fff; }
+.pp-chip--progress { background: var(--pp-progress); color: #fff; }
+.pp-chip--warn { background: var(--pp-warn); color: #fff; }
+.pp-chip--bad { background: var(--pp-bad); color: #fff; }
+.pp-chip--outline { background: var(--pp-surface); border: 1px solid var(--pp-line); }
+
+/* Small meta tag with icon (job numbers, ids) */
+.pp-tag {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--pp-line); border-radius: 999px;
+  padding: 3px 10px; font: 600 11.5px/1.4 var(--pp-font); color: var(--pp-ink-soft);
+  background: var(--pp-surface);
+}
+
+/* ---- 7. Tabs ------------------------------------------------ */
+.pp-tabs {
+  display: flex; gap: 4px;
+  border-bottom: 1px solid var(--pp-line);
+  padding: 0 20px;
+}
+.pp-tab {
+  padding: 11px 14px; font: 600 13.5px/1 var(--pp-font);
+  color: var(--pp-muted); cursor: pointer;
+  border: 0; background: none;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.pp-tab:hover { color: var(--pp-ink); }
+.pp-tab.is-active { color: var(--pp-ink); border-bottom-color: var(--pp-ink); }
+
+/* ---- 8. Forms ----------------------------------------------- */
+.pp-input, .pp-select {
+  display: block; width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--pp-line); border-radius: var(--pp-radius-sm);
+  font: 500 13.5px/1.4 var(--pp-font); color: var(--pp-ink);
+  background: var(--pp-surface);
+}
+.pp-input::placeholder { color: var(--pp-muted); }
+.pp-input:focus, .pp-select:focus { outline: none; border-color: var(--pp-primary); box-shadow: var(--pp-focus); }
+.pp-label { display: block; font: 600 12px/1.4 var(--pp-font); color: var(--pp-ink-soft); margin-bottom: 12px; }
+.pp-label > .pp-input, .pp-label > .pp-select { margin-top: 5px; }
+.pp-hint { display: block; font: 500 11.5px/1.4 var(--pp-font); color: var(--pp-muted); margin-top: 4px; }
+
+/* ---- 9. Tables ---------------------------------------------- */
+.pp-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.pp-table th {
+  text-align: left; font: 600 12px/1.3 var(--pp-font); color: var(--pp-ink-soft);
+  padding: 10px 14px; border-bottom: 1px solid var(--pp-line);
+  white-space: nowrap;
+}
+.pp-table td { padding: 12px 14px; border-bottom: 1px solid var(--pp-line-soft); vertical-align: middle; }
+.pp-table tr:last-child td { border-bottom: 0; }
+.pp-table tr:hover td { background: #fafbfc; }
+.pp-table .pp-cell-strong { font-weight: 600; }
+.pp-table .pp-cell-muted { color: var(--pp-muted); }
+
+/* Table footer / pagination row */
+.pp-table-foot {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; border-top: 1px solid var(--pp-line);
+  color: var(--pp-ink-soft); font-size: 13px;
+}
+
+/* ---- 10. List items (tasks / activity feeds) ---------------- */
+.pp-item { padding: 16px 20px; border-bottom: 1px solid var(--pp-line-soft); }
+.pp-item:last-child { border-bottom: 0; }
+.pp-item-title { font-weight: 700; font-size: 13.5px; margin-bottom: 8px; }
+.pp-item-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-bottom: 7px; color: var(--pp-ink-soft); font-size: 12.5px; }
+.pp-item-date { color: var(--pp-muted); font-size: 12px; }
+
+/* Avatar + avatar stack */
+.pp-avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--pp-ink-soft); color: #fff;
+  display: inline-flex; align-items: center; justify-content: center;
+  font: 700 11px/1 var(--pp-font); overflow: hidden; flex: none;
+}
+.pp-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.pp-avatar--lg { width: 38px; height: 38px; font-size: 13px; }
+.pp-avatars { display: inline-flex; align-items: center; }
+.pp-avatars .pp-avatar { border: 2px solid #fff; margin-left: -8px; }
+.pp-avatars .pp-avatar:first-child { margin-left: 0; }
+
+/* ---- 11. Empty state ---------------------------------------- */
+.pp-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; text-align: center;
+  background: #f6f7f8; border-radius: var(--pp-radius-sm);
+  color: var(--pp-muted); font-size: 13.5px;
+  padding: 56px 20px; margin: 16px 20px 20px;
+}
+.pp-empty-icon { font-size: 34px; opacity: .45; }
+
+/* ---- 12. Utilities ------------------------------------------ */
+.pp-muted { color: var(--pp-muted); }
+.pp-strong { font-weight: 700; }
+.pp-mt { margin-top: 16px; }
+.pp-mb { margin-bottom: 16px; }
+.pp-flex { display: flex; align-items: center; gap: 10px; }
+.pp-right { margin-left: auto; }
+.pp-scroll-x { overflow-x: auto; }

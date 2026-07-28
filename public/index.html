@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pronto Reporting Dashboard</title>
+
+  <!-- Pronto Base: shared nav + page template (auto-mounts <pronto-nav> + <pronto-banner>).
+       Loaded first so tool CSS below can override package defaults. -->
+  <script>
+    window.ProntoPage = {
+      pageTitle: "Reporting Dashboards",
+      subtitle: "Reporting",
+      pageInfo: "Build shareable dashboards from Pronto report data.",
+      appRoot: "https://havaspronto.com",
+      homepage: false,                   // "My Homepage" pill not relevant here
+      // Simplified chrome for the report builder: no Pronto site nav links,
+      // no search, no "+" create menu — logo + avatar (with Logout) only.
+      links: [],
+      search: { hidden: true },
+      plusMenu: false,
+      // user is pushed in by app.js after /api/auth/status resolves
+      userMenu: { sections: [{ items: [
+        { label: "My Details", icon: "idCard", href: "https://havaspronto.com/v2/account" },
+        { id: "logout", label: "Logout", icon: "logout",
+          onClick: function () { if (window.prontoLogout) window.prontoLogout(); } }
+      ] }] }
+    };
+  </script>
+  <script src="/base/v1/loader.js"></script>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack.min.css" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- <pronto-nav> + <pronto-banner> are auto-mounted here by /base/v1/loader.js -->
+
+  <!-- Dashboard toolbar -->
+  <div class="toolbar">
+    <button id="dashListBtn" class="tab-link" title="View all of your dashboards">View All Dashboards</button>
+    <span id="roBadge" class="ro-badge" hidden></span>
+    <div class="tb-actions">
+      <span id="status" class="status"></span>
+      <button id="shareBtn" class="btn" title="Copy a share link to this dashboard">Share</button>
+      <button id="addBtn" class="btn primary">+ Add widget</button>
+      <button id="saveBtn" class="btn">Save dashboard</button>
+      <button id="listNewBtn" class="btn primary" hidden>+ New dashboard</button>
+    </div>
+  </div>
+
+  <!-- /dashboards route: table of the signed-in user's dashboards -->
+  <div id="listView" class="list-view" hidden>
+    <section class="pp-card">
+      <div class="pp-card-head">
+        <h2 class="pp-card-title">My dashboards</h2>
+      </div>
+      <div class="pp-card-body--flush pp-scroll-x">
+        <table class="pp-table" id="dashTable">
+          <thead><tr><th>Dashboard</th><th>Widgets</th><th>Author</th><th>Last updated</th><th></th></tr></thead>
+          <tbody id="dashRows"></tbody>
+        </table>
+        <div id="dashEmpty" class="dash-empty" hidden>No dashboards yet — create your first one.</div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Create-dashboard modal -->
+  <div id="createScrim" class="modal-scrim"></div>
+  <div id="createModal" class="modal" role="dialog" aria-labelledby="createModalTitle">
+    <div class="modal-head"><span id="createModalTitle">New dashboard</span>
+      <button id="createClose" class="icon-btn">✕</button></div>
+    <div class="modal-body">
+      <label>Dashboard name
+        <input id="c_name" type="text" placeholder="e.g. BETC Brasil — Jobs H1" />
+        <span id="c_nameErr" class="field-err"></span>
+      </label>
+      <span class="field-hint">You'll get a private link (unguessable id). Share the link to give
+        colleagues a view-only copy — only you can save changes.</span>
+    </div>
+    <div class="modal-foot">
+      <button id="c_create" class="btn primary">Create dashboard</button>
+      <button id="c_cancel" class="btn">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Duplicate-dashboard modal -->
+  <div id="dupScrim" class="modal-scrim"></div>
+  <div id="dupModal" class="modal" role="dialog" aria-labelledby="dupModalTitle">
+    <div class="modal-head"><span id="dupModalTitle">Duplicate dashboard</span>
+      <button id="dupClose" class="icon-btn">✕</button></div>
+    <div class="modal-body">
+      <label>New dashboard name
+        <input id="dup_name" type="text" placeholder="e.g. Copy of BETC Brasil — Jobs H1" />
+        <span id="dup_nameErr" class="field-err"></span>
+      </label>
+      <label class="dup-check"><input id="dup_applyOffice" type="checkbox" />
+        Apply an office filter to all widgets</label>
+      <span class="field-hint">Optional. If ticked, every widget's existing office filter is
+        <b>removed</b> and replaced with the office(s) you choose below — a one-step way to
+        re-point the whole copied dashboard at a different office.</span>
+      <fieldset id="dup_officeBox" class="filter-box" hidden>
+        <legend>Offices</legend>
+        <div class="office-picker">
+          <input id="dup_officeSearch" type="text" autocomplete="off" placeholder="Search offices to add&hellip;" />
+          <div id="dup_officeMenu" class="office-menu"></div>
+        </div>
+        <div id="dup_officeChips" class="chips"></div>
+        <span id="dup_officeErr" class="field-err"></span>
+      </fieldset>
+    </div>
+    <div class="modal-foot">
+      <button id="dup_create" class="btn primary">Duplicate</button>
+      <button id="dup_cancel" class="btn">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Rename-dashboard modal -->
+  <div id="renScrim" class="modal-scrim"></div>
+  <div id="renModal" class="modal" role="dialog" aria-labelledby="renModalTitle">
+    <div class="modal-head"><span id="renModalTitle">Rename dashboard</span>
+      <button id="renClose" class="icon-btn">✕</button></div>
+    <div class="modal-body">
+      <label>Dashboard name
+        <input id="ren_name" type="text" placeholder="Dashboard name" />
+        <span id="ren_nameErr" class="field-err"></span>
+      </label>
+    </div>
+    <div class="modal-foot">
+      <button id="ren_save" class="btn primary">Save name</button>
+      <button id="ren_cancel" class="btn">Cancel</button>
+    </div>
+  </div>
+
+
+  <!-- Grid -->
+  <div class="grid-stack"></div>
+  <div id="emptyState" class="empty">No widgets yet. Click <b>+ Add widget</b> to build your first graph.</div>
+
+  <!-- Widget editor drawer -->
+  <div id="drawer" class="drawer">
+    <div class="drawer-head">
+      <span id="drawerTitle">Graph settings</span>
+      <button id="drawerClose" class="icon-btn">✕</button>
+    </div>
+    <div class="drawer-body">
+      <div class="ct-label">Chart type</div>
+      <div id="chartTypes" class="chart-types"></div>
+
+      <label>Title<input id="f_title" type="text" placeholder="(auto)" /></label>
+
+      <label>Data Source<select id="f_dataSource"></select></label>
+
+      <fieldset class="group-box">
+        <legend>Group By</legend>
+        <div class="sayt">
+          <input id="f_groupBySearch" type="text" autocomplete="off" placeholder="Search fields&hellip;" />
+          <div id="groupByMenu" class="sayt-menu"></div>
+        </div>
+        <select id="f_groupBy" class="sayt-native"></select>
+        <div class="two">
+          <label>Limit (top N)<input id="f_limit" type="number" min="1" max="600" /></label>
+          <label class="chk chk-inline"><input type="checkbox" id="f_showOther" /> Show &ldquo;Other&rdquo;</label>
+        </div>
+      </fieldset>
+
+      <fieldset class="group-box" id="subGroupBox">
+        <legend>Sub-group By</legend>
+        <div class="sayt">
+          <input id="f_subGroupSearch" type="text" autocomplete="off" placeholder="Search fields&hellip;" />
+          <div id="subGroupMenu" class="sayt-menu"></div>
+        </div>
+        <select id="f_subGroup" class="sayt-native"></select>
+        <div class="two">
+          <label id="subGroupLimitWrap" style="display:none">Series limit<input id="f_subGroupLimit" type="number" min="0" max="50" /></label>
+          <label id="subGroupModeWrap" style="display:none">Series selection
+            <select id="f_subGroupMode">
+              <option value="per-group">Top N per group</option>
+              <option value="global">Consistent across groups</option>
+            </select>
+          </label>
+        </div>
+        <span id="subGroupModeHint" class="field-hint"></span>
+      </fieldset>
+
+      <div class="two" id="intervalRow">
+        <label id="intervalWrap">Interval<select id="f_interval"></select></label>
+        <label>Display As<select id="f_displayAs"></select></label>
+      </div>
+
+      <label id="statsFieldWrap" style="display:none">Stats field
+        <select id="f_statsField">
+          <option value="">(default for source)</option>
+          <option value="hours">hours</option>
+          <option value="time">time</option>
+        </select>
+      </label>
+
+      <label>Date range<select id="f_datePreset"></select></label>
+      <div class="two">
+        <label>Date from<input id="f_dateFrom" type="date" /></label>
+        <label>Date to<input id="f_dateTo" type="date" /></label>
+      </div>
+
+      <fieldset class="group-box" id="compareBox" style="display:none">
+        <legend>Comparison period</legend>
+        <div id="compareOpts">
+          <label>Compare with
+            <select id="f_compareMode">
+              <option value="previous-period">Previous period (same length)</option>
+              <option value="previous-year">Same period last year</option>
+              <option value="custom">Custom dates</option>
+            </select>
+          </label>
+          <div class="two" id="compareCustom" style="display:none">
+            <label>From<input id="f_compareFrom" type="date" /></label>
+            <label>To<input id="f_compareTo" type="date" /></label>
+          </div>
+          <span id="compareHint" class="field-hint"></span>
+        </div>
+      </fieldset>
+
+      <details class="reveal">
+        <summary>More filters &amp; options</summary>
+        <div class="reveal-body">
+          <fieldset class="filter-box">
+            <legend>Offices</legend>
+            <div class="office-picker">
+              <input id="f_officeSearch" type="text" autocomplete="off" placeholder="Search offices to add&hellip;" />
+              <div id="officeMenu" class="office-menu"></div>
+            </div>
+            <div id="officeChips" class="chips"></div>
+            <div class="office-hint">Narrows the report (also speeds it up).</div>
+          </fieldset>
+
+          <fieldset class="filter-box">
+            <legend>Filters</legend>
+            <div id="filterRows"></div>
+            <div class="filter-actions">
+              <button type="button" id="addFilterBtn" class="btn-link">+ Add filter</button>
+              <button type="button" id="clearFiltersBtn" class="btn-link muted">Clear all</button>
+            </div>
+            <div class="office-hint">Filters are combined with AND. Values must match exactly.</div>
+          </fieldset>
+
+          <label>Colour theme<select id="f_theme"></select></label>
+        </div>
+      </details>
+    </div>
+    <div class="drawer-foot">
+      <button id="applyBtn" class="btn primary">Apply</button>
+      <button id="cancelBtn" class="btn">Cancel</button>
+    </div>
+  </div>
+  <div id="scrim" class="scrim"></div>
+
+  <!-- Dashboard settings modal (shown when saving) -->
+  <div id="dashModalScrim" class="modal-scrim"></div>
+  <div id="dashModal" class="modal" role="dialog" aria-labelledby="dashModalTitle">
+    <div class="modal-head"><span id="dashModalTitle">Dashboard settings</span>
+      <button id="dashModalClose" class="icon-btn">✕</button>
+    </div>
+    <div class="modal-body">
+      <label>Dashboard name
+        <input id="d_name" type="text" placeholder="e.g. Board KPIs — H1 2026" />
+        <span id="d_nameErr" class="field-err"></span>
+      </label>
+
+      <label>Refresh data
+        <select id="d_refresh"></select>
+        <span class="field-hint">Checked when the dashboard loads. If the data is older than
+          this, all widgets refetch automatically. The ⟳ button on each widget always
+          refreshes on demand.</span>
+      </label>
+      <div id="d_lastRefreshed" class="field-hint"></div>
+
+      <div class="notice notice-warn">
+        <b>Stored and shared exactly as-is.</b>
+        This dashboard is saved with the data and filters shown above. Anyone with access
+        to it will see this data as-is — including any office, client or user-level detail
+        in the widgets. Please make sure that is appropriate before sharing.
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button id="dashSaveBtn" class="btn primary">Save dashboard</button>
+      <button id="dashCancelBtn" class="btn">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Login screen (shown when no session exists and no .env fallback is configured).
+       Per-user mode: your Pronto login is exchanged for an API token; dashboards and
+       cached report data are stored against YOUR Pronto user id. -->
+  <div id="loginScreen" class="login-screen" hidden>
+    <div class="login-card">
+      <img class="login-logo" src="/base/v1/img/havas-pronto-wide.png"
+           onerror="this.onerror=null;this.src='https://havaspronto.com/v2/build/images/logos/Havas-pronto-wide.png'" alt="Havas Pronto"/>
+      <h2>Sign in to Reporting Dashboards</h2>
+      <p class="login-sub">Use your HavasPronto.com account. Your dashboards, widgets and
+        cached report data are private to your Pronto user.</p>
+
+      <!-- PKCE broker: log in on the Pronto site itself (SSO included) -->
+      <button id="brokerBtn" class="pp-btn pp-btn--primary login-btn" type="button">Sign in with HavasPronto</button>
+      <p id="brokerStatus" class="login-note" hidden></p>
+
+      <div class="login-divider" id="brokerDivider"><span>or with email &amp; password</span></div>
+      <form id="loginForm">
+        <label class="pp-label">Email
+          <input id="l_email" class="pp-input" type="email" autocomplete="username" placeholder="you@havas.com"/></label>
+        <label class="pp-label">Password
+          <input id="l_password" class="pp-input" type="password" autocomplete="current-password"/></label>
+        <button class="pp-btn login-btn" type="submit">Sign in</button>
+        <p class="login-note">Your password is exchanged with havaspronto.com for an API token
+          and is never stored by this app.</p>
+      </form>
+
+      <div class="login-divider"><span>or use an API token</span></div>
+      <form id="tokenForm">
+        <label class="pp-label">Bearer token
+          <input id="l_token" class="pp-input" type="password" placeholder="Paste your Pronto API token"/></label>
+        <div class="login-row">
+          <a id="tokenGenLink" href="#" target="_blank" rel="noopener" hidden>Get a token &#8599;</a>
+          <button class="pp-btn login-btn" type="submit">Sign in with token</button>
+        </div>
+      </form>
+
+      <div id="loginErr" class="login-err" hidden></div>
+      <p class="login-note" id="loginBackWrap" hidden style="text-align:center;margin-top:14px">
+        <a href="#" id="loginBack">← Back to the dashboard</a></p>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack-all.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

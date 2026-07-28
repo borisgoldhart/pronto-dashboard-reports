@@ -1,0 +1,25 @@
+{
+  "name": "pronto-dashboard",
+  "version": "0.1.0",
+  "description": "Standalone HTML dashboard for the Pronto (Solr) Reporting API — replaces the legacy havaspronto.com reporting UI.",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "verify": "node scripts/verify.js",
+    "test:kv": "node scripts/test-kv.mjs",
+    "vendor:base": "node scripts/vendor-base.mjs",
+    "import:redis": "node scripts/import-dashboards-to-redis.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@upstash/redis": "^1.38.0",
+    "cors": "^2.8.6",
+    "dotenv": "^16.6.1",
+    "express": "^4.22.2",
+    "ioredis": "^5.11.1"
+  }
+}

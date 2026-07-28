@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Ops Dashboard - Lewis · Pronto</title>
+
+  <!-- ============================================================
+       PRONTO BASE — this is ALL a page needs for the shared chrome.
+       1) optional rich config          (window.ProntoPage)
+       2) one script tag                (loader.js)
+       Everything below that is tool-specific.
+       ============================================================ -->
+  <script>
+    window.ProntoPage = {
+      pageTitle: "Ops Dashboard - Lewis",
+      subtitle: "Dashboard",
+      pageInfo: "The Project Manager Dashboard gives you a quick summary of your projects.",
+      active: "home",
+      appRoot: "https://havaspronto.com",
+      user: { name: "Lewis Lowery", href: "https://havaspronto.com/profile" },
+      homepage: { label: "My Homepage", href: "#", checked: true,
+        menu: { sections: [{ items: [
+          { label: "Duplicate Dashboard", icon: "copy", href: "#" },
+          { label: "View All Dashboards", icon: "layout", href: "#" }] }] } },
+      /* Dropdowns: Apps/+/avatar menus are package defaults. Per-page menus
+         attach to default links by id — e.g. Projects, mirroring the live nav.
+         Later these become live via fetchMenu(id) once an API exists. */
+      menus: { projects: { sections: [
+        { title: "Recently Accessed", items: [
+          { label: "[EC1027748] Bunzl 2017 Annual Report", icon: "rocket", href: "#" },
+          { label: "[EC1025179] Clearings Brochure 2017", icon: "rocket", href: "#" },
+          { label: "[EC1025346] Shell - Virtual Storytelling", icon: "rocket", href: "#" }] },
+        { title: "Starred", items: [
+          { label: "[PULSE20151201] Pulse/Agresso Integration", icon: "rocket", href: "#" },
+          { label: "[SUPPORT000] Havas PRONTO SUPPORT", icon: "rocket", href: "#" }] }],
+        footer: [{ label: "View All Projects", href: "#" }, { label: "Create Project", href: "#" }] } }
+      /* later: user: "auto", fetchUser: () => fetch("/api/me").then(r => r.json()) */
+    };
+  </script>
+  <script src="../v1/loader.js"></script>
+
+  <!-- ============================================================
+       TOOL-SPECIFIC styles — everything this page adds on top of
+       the base package. Kept deliberately tiny.
+       ============================================================ -->
+  <style>
+    .review-thumb { width: 44px; height: 30px; border-radius: 4px; background: #e9ebee; border: 1px solid var(--pp-line); flex: none; }
+    .review-title { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+    .activity { display: flex; gap: 12px; }
+    .activity-icon {
+      width: 40px; height: 40px; border-radius: 50%; flex: none;
+      background: #dbe7fb; color: #3b5bd6;
+      display: flex; align-items: center; justify-content: center; font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <!-- <pronto-nav> and <pronto-banner> are auto-mounted here by the loader -->
+
+  <main class="pp-page">
+    <div class="pp-grid">
+
+      <!-- Welcome / links -->
+      <section class="pp-card pp-card--feature pp-col-4">
+        <div class="pp-card-head"><h2 class="pp-card-title">Welcome to Pronto!</h2></div>
+        <div class="pp-card-body">
+          <p>The Project Manager Dashboard gives you a quick summary of the Tasks, Resource Bookings and Reviews for your Projects directly on your Dashboard.</p>
+          <p>Access other useful Pronto tools and reports from the links below:</p>
+          <a class="pp-linkrow" href="#">Lewis &amp; Meg Lowery</a>
+          <a class="pp-linkrow" href="#">Project List</a>
+          <a class="pp-linkrow" href="#">Missing Time</a>
+        </div>
+      </section>
+
+      <!-- Reviews -->
+      <section class="pp-card pp-col-8">
+        <div class="pp-card-head">
+          <h2 class="pp-card-title">Reviews</h2>
+          <span class="pp-spacer"></span>
+          <button class="pp-btn pp-btn--sm">Reviews Assigned T...</button>
+          <button class="pp-iconbtn pp-iconbtn--boxed" title="Filter">&#9776;</button>
+          <button class="pp-btn pp-btn--primary">+ Create Review</button>
+        </div>
+        <div class="pp-card-body--flush pp-scroll-x">
+          <table class="pp-table">
+            <thead>
+              <tr><th></th><th>Review Title</th><th>Round</th><th>Job Number</th><th>Project</th><th></th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="review-thumb"></span></td>
+                <td class="pp-cell-strong">Test Review please ignore</td>
+                <td>3</td><td>123456</td>
+                <td class="pp-cell-muted">aftest-hh-0505-1038-ple...</td>
+                <td><button class="pp-btn pp-btn--sm" disabled>Preparing...</button></td>
+              </tr>
+              <tr>
+                <td><span class="review-thumb"></span></td>
+                <td class="pp-cell-strong">[#80434] Design_ Public Links Landing Pa...</td>
+                <td>1</td><td>PULSE20151201</td>
+                <td class="pp-cell-muted">Pulse/Agresso Integration...</td>
+                <td><button class="pp-btn pp-btn--sm">View Proof</button></td>
+              </tr>
+              <tr>
+                <td><span class="review-thumb"></span></td>
+                <td class="pp-cell-strong">Pronto - Roadmap Projects - AI Timelines...</td>
+                <td>3</td><td>PULSE20151201</td>
+                <td class="pp-cell-muted">Pulse/Agresso Integration...</td>
+                <td><button class="pp-btn pp-btn--sm">View Proof</button></td>
+              </tr>
+              <tr>
+                <td><span class="review-thumb"></span></td>
+                <td class="pp-cell-strong">Error in the console.png</td>
+                <td>2</td><td>559088</td>
+                <td class="pp-cell-muted">DS Pronto Test 170925</td>
+                <td><button class="pp-btn pp-btn--sm">View Proof</button></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="pp-table-foot">
+            <button class="pp-iconbtn" title="Previous">&#8249;</button>
+            Page 1 of 4
+            <button class="pp-iconbtn" title="Next">&#8250;</button>
+            <span class="pp-right pp-muted">Displaying records 1 - 5 of 17</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tasks -->
+      <section class="pp-card pp-col-4">
+        <div class="pp-card-head"><h2 class="pp-card-title">Tasks: My Recently Updated</h2></div>
+        <div class="pp-card-body--flush">
+          <div class="pp-item">
+            <div class="pp-item-title pp-flex">PT_2019_ILL_SIS_COMP_PT_IllyAndreaBocelli.mp4
+              <span class="pp-right pp-chip pp-chip--ok">Please Start</span></div>
+            <div class="pp-item-meta">
+              <span class="pp-tag">&#9776; 1062229</span><span class="pp-tag">&#128640; HP1067295</span>
+              JDE - PORTUGAL - ILLY - PT - MUPIS VI...
+            </div>
+            <div class="pp-flex">
+              <span class="pp-avatars"><span class="pp-avatar">LL</span><span class="pp-avatar">MG</span><span class="pp-avatar">+1</span></span>
+              <span class="pp-right pp-item-date">05/06/2019 - 10/06/2019</span>
+            </div>
+          </div>
+          <div class="pp-item">
+            <div class="pp-item-title pp-flex">JDE_HU_SIS_LOR_JDEMINE_HU_Equity.mp4
+              <span class="pp-right pp-chip pp-chip--ok">Please Start</span></div>
+            <div class="pp-item-meta">
+              <span class="pp-tag">&#9776; 985515</span><span class="pp-tag">&#128640; HP1059532</span>
+              JDE - Hungary - L'OR - L'OR 15sec OLV U...
+            </div>
+            <div class="pp-flex">
+              <span class="pp-avatars"><span class="pp-avatar">LL</span><span class="pp-avatar">+1</span></span>
+              <span class="pp-right pp-item-date">26/02/2019 - 04/03/2019</span>
+            </div>
+          </div>
+          <div class="pp-item">
+            <div class="pp-item-title pp-flex">Approved PO can&#39;t be voided?
+              <span class="pp-right pp-chip pp-chip--progress">In Progress</span></div>
+            <div class="pp-item-meta">
+              <span class="pp-tag">&#9776; 741367</span><span class="pp-tag">&#128640; BRUPUL</span>
+              Havas Brussels - Pulse Support
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Resource bookings -->
+      <section class="pp-card pp-col-4">
+        <div class="pp-card-head">
+          <h2 class="pp-card-title">Resource Bookings</h2>
+          <span class="pp-spacer"></span>
+          <button class="pp-btn pp-btn--sm">&#8599; Open Resource Scheduler</button>
+        </div>
+        <div class="pp-tabs">
+          <button class="pp-tab is-active">My Bookings</button>
+          <button class="pp-tab">Bookings Managed</button>
+        </div>
+        <div class="pp-empty">
+          <span class="pp-empty-icon">&#128197;</span>
+          There are currently no Bookings to be displayed.
+        </div>
+      </section>
+
+      <!-- Recent activity -->
+      <section class="pp-card pp-col-4">
+        <div class="pp-card-head"><h2 class="pp-card-title">Recent Activity</h2></div>
+        <div class="pp-card-body--flush">
+          <div class="pp-item activity">
+            <span class="activity-icon">&#9776;</span>
+            <div>
+              <div class="pp-item-title">URGENT—CANNOT DELETE STAGES</div>
+              <div class="pp-item-meta"><span class="pp-tag">&#9776; 2804497</span><span class="pp-tag">&#128640; SUPPORT000</span></div>
+              <div class="pp-item-date">11/07/2026 04:54am</div>
+            </div>
+          </div>
+          <div class="pp-item activity">
+            <span class="activity-icon">&#9776;</span>
+            <div>
+              <div class="pp-item-title">Job builder tasks are not being auto-assigned</div>
+              <div class="pp-item-meta"><span class="pp-tag">&#9776; 2801527</span><span class="pp-tag">&#128640; SUPPORT000</span></div>
+              <div class="pp-item-date">11/07/2026 04:54am</div>
+            </div>
+          </div>
+          <div class="pp-item activity">
+            <span class="activity-icon">&#9776;</span>
+            <div>
+              <div class="pp-item-title">[PRINT STUDIO] Finances (estimate, PO, tracking)</div>
+              <div class="pp-item-meta"><span class="pp-tag">&#9776; 2786856</span><span class="pp-tag">&#128640; SS1426609</span></div>
+              <div class="pp-item-date">10/07/2026 04:21am</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</body>
+</html>

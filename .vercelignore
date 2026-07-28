@@ -1,0 +1,16 @@
+# Never upload these to Vercel. The CLI does NOT read .gitignore, so without this
+# file the secrets in .env (PRONTO_EMAIL / PRONTO_PASSWORD) get shipped into the
+# deployment bundle. Set credentials as Vercel Environment Variables instead.
+.env
+.env.*
+!.env.example
+
+# Local runtime state — the deployed app uses Redis (see server/kv.js), not these.
+.cache/
+data/
+
+# Never needed in the bundle.
+node_modules/
+.git/
+.DS_Store
+*.log

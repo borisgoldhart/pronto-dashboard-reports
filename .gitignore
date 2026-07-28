@@ -1,0 +1,14 @@
+# Secrets — NEVER commit. Real credentials live in Vercel Environment Variables.
+.env
+.env.*
+!.env.example
+
+# Local runtime state (the deployed app uses Redis — see server/kv.js)
+.cache/
+data/
+
+# Tooling
+node_modules/
+.vercel/
+.DS_Store
+*.log
