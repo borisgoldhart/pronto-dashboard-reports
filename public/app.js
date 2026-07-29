@@ -458,7 +458,7 @@ function tileHTML(w) {
             <div class="export-opt" data-exp="json">Export JSON</div>
           </div>
         </span>
-        ${PUBLIC_VIEW ? "" : '<button class="icon-btn" data-act="refresh" title="Refresh">⟳</button>'}
+        ${PUBLIC_VIEW || SNAPSHOT_ID ? "" : '<button class="icon-btn" data-act="refresh" title="Refresh">⟳</button>'}
         ${CURRENT_DASH.canEdit && !PUBLIC_VIEW
           ? '<button class="icon-btn" data-act="copy" title="Duplicate this widget">⧉</button><button class="icon-btn" data-act="edit" title="Edit">✎</button><button class="icon-btn" data-act="remove" title="Remove">🗑</button>'
           : ""}
@@ -752,10 +752,16 @@ async function renderWidget(w, { nocache = false } = {}) {
   updateInfo(w);
   setMsg(w, "Loading… (Pronto reports can take 10–30s the first time)");
   try {
-    // dashboardId scopes the server cache to THIS dashboard (shared snapshot:
-    // every viewer of the dashboard reads/warms the same partition).
-    const res = await api(`/api/report/query${nocache ? "?nocache=1" : ""}`,
-      { method: "POST", body: JSON.stringify({ ...w.spec, dashboardId: CURRENT_DASH.guid || undefined }) });
+    // A frozen snapshot reads stored bytes and nothing else — same response
+    // shape as a live query, so everything below this line is unchanged. There
+    // is deliberately no fallback to /api/report/query: a snapshot must show
+    // the numbers it was taken with, or say plainly that it can't.
+    const res = SNAPSHOT_ID
+      ? await api(`/api/snapshot/${encodeURIComponent(SNAPSHOT_ID)}/data/${encodeURIComponent(w.id)}`)
+      : // dashboardId scopes the server cache to THIS dashboard (shared snapshot:
+        // every viewer of the dashboard reads/warms the same partition).
+        await api(`/api/report/query${nocache ? "?nocache=1" : ""}`,
+          { method: "POST", body: JSON.stringify({ ...w.spec, dashboardId: CURRENT_DASH.guid || undefined }) });
     // Record the exact request(s) for transparency (shown in the ⓘ hover).
     w.lastUrl = res.url; w.lastUrls = res.urls; w.lastAuth = res.authUsed; w.lastSeconds = res.seconds; w.lastChunked = res.chunked;
     w.fetchedAs = res.fetchedAs || null;
@@ -763,7 +769,7 @@ async function renderWidget(w, { nocache = false } = {}) {
     updateInfo(w);
     if (!res.ok) { setMsg(w, (res.error || "Query failed") + "\n\nRequest: " + (res.url || "(none)"), true); return; }
     setMsg(w, "");
-    w.el.querySelector(".w-cached").textContent = res.cached ? "cached" : "";
+    w.el.querySelector(".w-cached").textContent = SNAPSHOT_ID ? "frozen" : (res.cached ? "cached" : "");
     w.lastData = { intervals: res.intervals, series: res.series }; // for CSV/JSON export
     if (!res.intervals || res.intervals.length === 0) {
       setMsg(w, "No data returned for this query.\n\nRequest: " + (res.url || "(none)") + "\n(Hover ⓘ to inspect; click the URL to open it directly.)", false);
@@ -1543,6 +1549,11 @@ async function submitDuplicate() {
 /* /dashboards route: table of the signed-in user's dashboards. */
 const IS_LIST_VIEW = location.pathname.replace(/\/+$/, "") === "/dashboards";
 
+/* ?s=<snapId> — a frozen snapshot link. Read-only for everyone, including its
+   author: widget data comes from stored bytes, never from a live query. */
+const SNAPSHOT_ID = new URLSearchParams(location.search).get("s") || null;
+let SNAPSHOT_META = null;
+
 async function renderListView() {
   // Keep the white utility bar as its own strip above the table well —
   // board-only actions hidden, the tab marked active.
@@ -1591,10 +1602,178 @@ async function renderListView() {
 
 function copyShareLink(guid) {
   const url = `${location.origin}/?d=${guid || CURRENT_DASH.guid}`;
+  copyToClipboard(url);
+}
+
+function copyToClipboard(url) {
   navigator.clipboard?.writeText(url).then(
     () => { $("status").textContent = "link copied ✓"; setTimeout(() => ($("status").textContent = ""), 2000); },
     () => prompt("Copy this link:", url),
   );
+}
+
+/* ---- share modal ---------------------------------------------------------- */
+
+const snapUrlFor = (id) => `${location.origin}/?s=${id}`;
+
+function openShareModal() {
+  if (!CURRENT_DASH.guid) return;
+  $("sh_liveUrl").value = `${location.origin}/?d=${CURRENT_DASH.guid}`;
+  $("sh_note").value = "";
+  $("sh_progressWrap").hidden = true;
+  $("sh_resultWrap").hidden = true;
+  $("sh_bar").style.width = "0%";
+  $("sh_progressText").textContent = "";
+  $("sh_resultNote").textContent = "";
+  const freeze = $("sh_freeze");
+  freeze.disabled = false; freeze.textContent = "Freeze & create link";
+  $("shareModal").classList.add("open");
+  $("shareScrim").classList.add("open");
+  renderSnapshotList();
+}
+
+function closeShareModal() {
+  $("shareModal").classList.remove("open");
+  $("shareScrim").classList.remove("open");
+}
+
+/**
+ * Take a snapshot: create the shell (which pins every widget's dates), capture
+ * one widget per request, then finalize. One request per widget keeps each call
+ * to about the cost of a normal widget render — a single request running every
+ * report query would trip the serverless execution limit on a big dashboard.
+ */
+async function freezeSnapshot() {
+  const btn = $("sh_freeze");
+  btn.disabled = true; btn.textContent = "Freezing…";
+  $("sh_resultWrap").hidden = true;
+  $("sh_progressWrap").hidden = false;
+  const setProgress = (done, total, label) => {
+    $("sh_bar").style.width = total ? `${Math.round((done / total) * 100)}%` : "0%";
+    $("sh_progressText").textContent = label;
+  };
+  setProgress(0, 1, "Pinning dates…");
+
+  try {
+    const created = await api(`/api/dashboard/${encodeURIComponent(CURRENT_DASH.guid)}/snapshot`,
+      { method: "POST", body: JSON.stringify({ note: $("sh_note").value || "" }) });
+    if (!created || !created.ok) throw new Error((created && created.error) || "Could not start the snapshot.");
+
+    const ids = created.widgetIds || [];
+    const failed = [];
+    for (let i = 0; i < ids.length; i++) {
+      setProgress(i, ids.length, `Capturing widget ${i + 1} of ${ids.length}… (first fetch can take 10–30s)`);
+      let r = null;
+      try {
+        r = await api(`/api/snapshot/${created.snapId}/capture/${encodeURIComponent(ids[i])}`, { method: "POST" });
+      } catch (e) { r = { ok: false, error: String(e.message || e) }; }
+      if (!r || !r.ok || r.error) failed.push(ids[i]);
+    }
+    setProgress(ids.length, ids.length, "Sealing the snapshot…");
+
+    const done = await api(`/api/snapshot/${created.snapId}/finalize`, { method: "POST" });
+    if (!done || !done.ok) throw new Error((done && done.error) || "Could not finish the snapshot.");
+
+    const url = snapUrlFor(created.snapId);
+    $("sh_progressWrap").hidden = true;
+    $("sh_resultWrap").hidden = false;
+    $("sh_resultUrl").value = url;
+    $("sh_resultNote").textContent = failed.length
+      ? `${ids.length - failed.length} of ${ids.length} widgets captured — ${failed.length} couldn't be fetched and will show their error in the snapshot.`
+      : `All ${ids.length} widget${ids.length === 1 ? "" : "s"} captured. This link shows these exact numbers forever, to anyone, without a login.`;
+    $("sh_resultUrl").select?.();
+    copyToClipboard(url);
+    renderSnapshotList();
+  } catch (e) {
+    $("sh_progressWrap").hidden = true;
+    $("sh_resultWrap").hidden = false;
+    $("sh_resultUrl").value = "";
+    $("sh_resultNote").textContent = String(e.message || e);
+  } finally {
+    // Once a link is on screen, pressing this again makes a second, separate
+    // snapshot rather than replacing the first — say so on the button.
+    btn.disabled = false;
+    btn.textContent = $("sh_resultUrl").value ? "Take another snapshot" : "Freeze & create link";
+  }
+}
+
+async function renderSnapshotList() {
+  const wrap = $("sh_existingWrap");
+  const tbody = $("sh_existing");
+  if (!wrap || !tbody || !CURRENT_DASH.guid) return;
+  let rows = [];
+  try {
+    const r = await api(`/api/dashboard/${encodeURIComponent(CURRENT_DASH.guid)}/snapshots`);
+    rows = (r && r.snapshots) || [];
+  } catch { rows = []; }
+  wrap.hidden = rows.length === 0;
+  // Label and provenance stack in one cell so the three actions always fit on a
+  // single line — the modal is too narrow for four columns plus buttons.
+  tbody.innerHTML = rows.map((s) => `<tr data-snap="${escapeHtml(s.snapId)}">
+      <td>
+        <div class="pp-cell-strong snap-label">${escapeHtml(s.note || "Untitled snapshot")}</div>
+        <div class="snap-when">${escapeHtml(fmtDate(s.takenAt))} · ${s.capturedCount || 0}/${s.widgetCount || 0} widgets</div>
+      </td>
+      <td class="snap-acts">
+        <button class="btn" data-open="1">Open</button>
+        <button class="btn" data-copy="1">Copy link</button>
+        <button class="btn" data-rev="1">Revoke</button>
+      </td>
+    </tr>`).join("");
+  tbody.onclick = async (e) => {
+    const row = e.target.closest("tr[data-snap]"); if (!row) return;
+    const id = row.getAttribute("data-snap");
+    if (e.target.closest("[data-open]")) { window.open(snapUrlFor(id), "_blank", "noopener"); return; }
+    if (e.target.closest("[data-copy]")) { copyToClipboard(snapUrlFor(id)); return; }
+    if (e.target.closest("[data-rev]")) {
+      if (!confirm("Revoke this snapshot? Anyone holding the link loses access and the stored copy is deleted. This cannot be undone.")) return;
+      const r = await api(`/api/snapshot/${id}`, { method: "DELETE" });
+      if (r && r.ok) renderSnapshotList();
+      else alert((r && r.error) || "Revoke failed");
+    }
+  };
+}
+
+/** "23 July 2026, 14:05" — snapshots are dated, not "3 days ago". */
+function fmtDate(iso) {
+  const d = new Date(iso || "");
+  if (isNaN(d)) return "unknown date";
+  return d.toLocaleString(undefined, { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/* ---- frozen snapshot view -------------------------------------------------- */
+
+/**
+ * Render a snapshot (?s=<id>). Everything comes from stored bytes: the widget
+ * specs are already pinned to absolute dates, so nothing is re-resolved here —
+ * re-resolving presets is precisely what made live share links go blank.
+ */
+async function loadSnapshot() {
+  const d = await api(`/api/snapshot/${encodeURIComponent(SNAPSHOT_ID)}`);
+  if (!d || !d.ok) {
+    $("emptyState").style.display = "block";
+    $("emptyState").innerHTML = `<h3>This snapshot isn't available</h3>
+      <p>${escapeHtml((d && d.error) || "The link may have been revoked by the person who shared it.")}</p>`;
+    setCrumb("Snapshot");
+    return;
+  }
+  SNAPSHOT_META = d;
+  // A snapshot is read-only for everyone, including the person who took it.
+  CURRENT_DASH = { guid: d.guid, canEdit: false, createdBy: null };
+  applyEditMode();
+  const badge = $("roBadge"); if (badge) badge.hidden = true;   // the frozen banner says it better
+  dashboardMeta = { title: d.title || "Dashboard", refreshInterval: "0", lastRefreshedAt: d.takenAt };
+  setCrumb(dashboardMeta.title);
+
+  const by = d.takenBy && d.takenBy.name ? ` by ${d.takenBy.name}` : "";
+  const note = d.note ? ` — ${d.note}` : "";
+  $("snapBannerText").textContent =
+    `Frozen snapshot taken on ${fmtDate(d.takenAt)}${by}${note}. These figures don't change.`;
+  $("snapBanner").hidden = false;
+
+  (d.widgets || []).forEach((w) => { w.spec = normalizeSpec(w.spec); addWidgetToGrid(w); });
+  widgets.forEach((w) => renderWidget(w));
+  updateEmptyState();
 }
 
 async function loadDashboard() {
@@ -1621,8 +1800,18 @@ async function loadDashboard() {
   (d.widgets || []).forEach((w) => {
     w.spec = normalizeSpec(w.spec);
     // Re-resolve date presets so saved widgets stay rolling (e.g. "Last 2 Months").
-    const pr = w.spec && resolvePreset(w.spec.datePreset);
-    if (pr) { w.spec.dateFrom = pr.from; w.spec.dateTo = pr.to; }
+    //
+    // Never for an anonymous share-link viewer. They have no credentials, so the
+    // server can only hand back rows that are already cached — and the cache key
+    // is a hash of the query URL, which contains the dates. Rolling the window
+    // forward on their behalf therefore asks for a key nobody has ever warmed,
+    // which is why a ?d= link that worked on Monday said "no data" by Wednesday.
+    // Using the dates the owner last saved keeps them on a key that exists.
+    // (For a link that can never drift at all, share a snapshot instead — ?s=.)
+    if (!PUBLIC_VIEW) {
+      const pr = w.spec && resolvePreset(w.spec.datePreset);
+      if (pr) { w.spec.dateFrom = pr.from; w.spec.dateTo = pr.to; }
+    }
     addWidgetToGrid(w);
   });
 
@@ -1656,8 +1845,10 @@ async function main() {
     if (who.authRequired) {
       // Shared link (?d=<guid>) opened without a session: render the PUBLIC
       // view-only snapshot (cached data, no refresh) instead of forcing login.
+      // A snapshot (?s=) is public by design: its data is stored bytes, so a
+      // signed-out viewer sees the complete report rather than a cached subset.
       const guid = new URLSearchParams(location.search).get("d");
-      if (!IS_LIST_VIEW && guid) {
+      if (!IS_LIST_VIEW && (guid || SNAPSHOT_ID)) {
         PUBLIC_VIEW = true;
         // The empty avatar offers a "Log in" entry for viewers who want more.
         window.ProntoPage.userMenu = { sections: [{ items: [
@@ -1699,8 +1890,14 @@ async function main() {
   OPTIONS = await api("/api/report/options");
   buildLabelMaps();
   initEditorOptions();
-  // Office list needs a session; the public share view never opens the editor.
-  if (!PUBLIC_VIEW) { try { initOfficePicker(); loadOffices(); } catch (e) { console.warn("office picker init skipped:", e); } }
+  // Office list needs a session; neither the public share view nor a frozen
+  // snapshot ever opens the editor.
+  if (!PUBLIC_VIEW && !SNAPSHOT_ID) { try { initOfficePicker(); loadOffices(); } catch (e) { console.warn("office picker init skipped:", e); } }
+
+  // Every control in the toolbar is hidden on a snapshot, so the strip would
+  // otherwise be a blank white bar sitting above the frozen banner. Drop it and
+  // let the banner be the first thing the recipient reads.
+  if (SNAPSHOT_ID) document.querySelector(".toolbar")?.setAttribute("hidden", "");
 
   grid = GridStack.init({ cellHeight: 90, margin: 8, float: true, handle: ".w-head", resizable: { handles: "e, se, s, sw, w" } });
 
@@ -1713,7 +1910,13 @@ async function main() {
   $("saveBtn").onclick = openDashSettings;          // saving now goes via the settings modal
   $("listNewBtn").onclick = openCreateDash;
   $("dashListBtn").onclick = () => { location.href = "/dashboards"; };
-  $("shareBtn").onclick = () => copyShareLink();
+  $("shareBtn").onclick = openShareModal;
+  $("sh_freeze").onclick = freezeSnapshot;
+  $("sh_copyResult").onclick = () => copyToClipboard($("sh_resultUrl").value);
+  $("sh_copyLive").onclick = () => copyToClipboard($("sh_liveUrl").value);
+  $("sh_done").onclick = closeShareModal;
+  $("shareClose").onclick = closeShareModal;
+  $("shareScrim").onclick = closeShareModal;
   $("c_create").onclick = createDashboard;
   $("c_cancel").onclick = closeCreateDash;
   $("createClose").onclick = closeCreateDash;
@@ -1729,7 +1932,7 @@ async function main() {
   $("drawerClose").onclick = closeEditor;
   $("scrim").onclick = closeEditor;
 
-  await loadDashboard();
+  await (SNAPSHOT_ID ? loadSnapshot() : loadDashboard());
 }
 
 /* ---- login / logout (per-user sessions) ------------------------------------ */

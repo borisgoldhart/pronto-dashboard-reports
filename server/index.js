@@ -9,6 +9,7 @@ import { attachUser } from "./users.js";
 import authRoutes from "./routes/auth.js";
 import reportRoutes from "./routes/report.js";
 import dashboardRoutes from "./routes/dashboard.js";
+import snapshotRoutes from "./routes/snapshot.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, "..", "public");
@@ -21,6 +22,7 @@ app.use("/api", attachUser);          // per-user session -> req.pronto (env-cre
 app.use("/api/auth", authRoutes);
 app.use("/api/report", reportRoutes);
 app.use("/api", dashboardRoutes);     // /api/dashboards + /api/dashboard/:guid (GUID report-builder model)
+app.use("/api", snapshotRoutes);      // /api/snapshot/:id (frozen, locked-in share links)
 
 app.get("/api/health", (_req, res) => res.json({ ok: true, authMode: authMode() }));
 

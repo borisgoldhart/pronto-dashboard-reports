@@ -46,7 +46,11 @@ export const INTERVALS = {
 export const CHART_TYPES = ["bar", "stacked", "line", "pie", "donut", "semi-circle"];
 export const PIVOT_BY = { group: "Group", subgroup: "Sub Group" };
 export const LABEL_ROTATION = { "270": "Vertical", "0": "Horizontal", "335": "Angle" };
-export const DATE_PRESETS = ["This Week", "Last 7 Days", "This Month", "Last Month", "Last 3 Months", "YTD", "Last Year", "Custom Dates"];
+// NB "Last 2 Months" is the default preset for a new widget and has always been
+// resolvable by the client — it was just missing from this list, so the editor
+// fell back to showing "Custom Dates" for a window that was in fact still
+// rolling daily. Listed now so what the dropdown says matches what runs.
+export const DATE_PRESETS = ["This Week", "Last 7 Days", "This Month", "Last Month", "Last 2 Months", "Last 3 Months", "YTD", "Last Year", "Custom Dates"];
 
 // The shared 96-field list (GROUP BY / SUBGROUP / FILTER). "value|label", deduped by value.
 const FIELD_LINES = `

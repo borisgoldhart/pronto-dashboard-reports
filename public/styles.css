@@ -29,6 +29,7 @@ body {
   box-shadow: 0 1px 3px rgba(16, 24, 40, .06);
   position: sticky; top: calc(var(--pp-nav-h, 56px) + 8px); z-index: 20;
 }
+.toolbar[hidden] { display: none; }   /* display:flex above outranks the UA rule */
 .tb-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .status { font-size: 12.5px; color: var(--muted); min-width: 60px; text-align: right; }
 
@@ -321,3 +322,47 @@ body {
 .btn-link:hover { text-decoration: underline; }
 .btn-link.muted { color: var(--muted); font-weight: 600; }
 .filter-empty { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+
+/* ---- Share modal + frozen snapshots ---- */
+.modal.modal-wide { width: 560px; }
+.share-opt { border: 1px solid var(--line); border-radius: 4px; padding: 14px; margin-bottom: 14px; }
+.share-opt:last-child { margin-bottom: 0; }
+.modal-body label.share-radio {
+  display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink);
+  margin: 0 0 6px; cursor: pointer; font-weight: 500;
+}
+.modal-body label.share-radio input[type="radio"] { display: inline-block; width: auto; margin: 0; padding: 0; flex: none; }
+.share-rec {
+  font-style: normal; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: #1a6b45; background: #e8f6ee; border: 1px solid #bfe3ce; border-radius: 999px; padding: 2px 8px; margin-left: 6px;
+}
+.modal-body label.share-note { margin: 12px 0 0; }
+.modal-body label.share-note .opt { font-weight: 500; color: var(--muted); }
+.share-actions { margin-top: 12px; }
+.share-actions .btn { width: 100%; }
+.share-result { margin-top: 12px; }
+.share-result label { margin-bottom: 8px; }
+.share-result input[readonly] { background: #f7f9fb; font-size: 12.5px; }
+.share-result .btn { width: 100%; }
+.share-progress { margin-top: 12px; }
+.share-bar { height: 6px; background: var(--line); border-radius: 999px; overflow: hidden; }
+.share-bar-fill { height: 100%; width: 0%; background: var(--pronto-blue); transition: width .25s ease; }
+.share-sub { display: block; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.share-table td { font-size: 12.5px; vertical-align: middle; }
+.share-table .snap-when { color: var(--muted); white-space: nowrap; font-size: 11.5px; margin-top: 2px; }
+.share-table .snap-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 210px; }
+.share-table .snap-acts { text-align: right; white-space: nowrap; width: 1%; }
+.share-table .snap-acts .btn { padding: 5px 9px; font-size: 12px; margin-left: 4px; }
+
+/* Read-only strip shown to anyone viewing a frozen snapshot link. */
+.snap-banner {
+  display: flex; align-items: center; gap: 9px;
+  margin: 10px var(--pp-gutter, 40px) 0; padding: 9px 14px;
+  background: #eef6fd; border: 1px solid #cfe4f7; border-radius: 4px;
+  font-size: 12.5px; font-weight: 600; color: #185685;
+}
+/* display:flex above outranks the UA stylesheet's [hidden]{display:none}, so the
+   attribute has to be honoured explicitly or the strip shows up empty on every
+   ordinary dashboard. */
+.snap-banner[hidden] { display: none; }
+.snap-banner .snap-dot { font-size: 13px; line-height: 1; }

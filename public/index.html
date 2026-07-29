@@ -48,6 +48,12 @@
     </div>
   </div>
 
+  <!-- Frozen-snapshot strip: shown only when viewing ?s=<snapId> -->
+  <div id="snapBanner" class="snap-banner" hidden>
+    <span class="snap-dot">❄</span>
+    <span id="snapBannerText"></span>
+  </div>
+
   <!-- /dashboards route: table of the signed-in user's dashboards -->
   <div id="listView" class="list-view" hidden>
     <section class="pp-card">
@@ -128,6 +134,62 @@
     <div class="modal-foot">
       <button id="ren_save" class="btn primary">Save name</button>
       <button id="ren_cancel" class="btn">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Share modal: frozen snapshot (default) or a live link -->
+  <div id="shareScrim" class="modal-scrim"></div>
+  <div id="shareModal" class="modal modal-wide" role="dialog" aria-labelledby="shareModalTitle">
+    <div class="modal-head"><span id="shareModalTitle">Share this dashboard</span>
+      <button id="shareClose" class="icon-btn">✕</button></div>
+    <div class="modal-body">
+      <div class="share-opt">
+        <label class="share-radio"><input type="radio" name="shareMode" value="snapshot" checked />
+          <span><b>Send a frozen snapshot</b> <em class="share-rec">recommended</em></span></label>
+        <span class="field-hint">Takes a copy of the numbers exactly as they stand right now and stores
+          it against its own link. What your colleague sees today is what they'll see next month —
+          the dates are pinned, so it can't drift or go blank. They don't need a Pronto login.</span>
+        <label class="share-note">Label this snapshot <span class="opt">(optional)</span>
+          <input id="sh_note" type="text" maxlength="120" placeholder="e.g. Board pack — July" />
+        </label>
+        <div id="sh_progressWrap" class="share-progress" hidden>
+          <div class="share-bar"><div id="sh_bar" class="share-bar-fill"></div></div>
+          <span id="sh_progressText" class="field-hint"></span>
+        </div>
+        <div id="sh_resultWrap" class="share-result" hidden>
+          <label>Snapshot link
+            <input id="sh_resultUrl" type="text" readonly />
+          </label>
+          <button id="sh_copyResult" class="btn primary">Copy link</button>
+          <span id="sh_resultNote" class="field-hint"></span>
+        </div>
+        <div class="share-actions">
+          <button id="sh_freeze" class="btn primary">Freeze &amp; create link</button>
+        </div>
+      </div>
+
+      <div class="share-opt">
+        <label class="share-radio"><input type="radio" name="shareMode" value="live" />
+          <span><b>Send a live link</b></span></label>
+        <span class="field-hint">Points at the dashboard itself. The numbers move as the window rolls
+          forward and as you refresh. Signed-out viewers only ever see data that has already been
+          loaded, so a live link can look incomplete if you haven't opened it recently.</span>
+        <div class="share-result">
+          <label>Live link
+            <input id="sh_liveUrl" type="text" readonly />
+          </label>
+          <button id="sh_copyLive" class="btn">Copy link</button>
+        </div>
+      </div>
+
+      <div class="share-opt" id="sh_existingWrap" hidden>
+        <b class="share-sub">Snapshots you've already taken</b>
+        <table class="pp-table share-table"><tbody id="sh_existing"></tbody></table>
+        <span class="field-hint">Revoking kills that link immediately and deletes the stored copy.</span>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button id="sh_done" class="btn">Done</button>
     </div>
   </div>
 
