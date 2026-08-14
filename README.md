@@ -115,8 +115,14 @@ against timesheet hours as a line. It is deliberately constrained:
 - It inherits the date range, interval, offices and filters of the primary. Two series
   are only comparable if they were measured over the same windows, so those controls
   are not repeated in the UI.
-- It is always **ungrouped** — one total per interval. Splitting the second source by
-  the same group as the bars would put a dozen lines over a dozen stacks.
+- It is always **one total per interval**. Splitting the second source by the same group
+  as the bars would put a dozen lines over a dozen stacks.
+- It nonetheless sends a `facet_field` (the source's own office dimension, limit 600).
+  The API **refuses** an interval query without one — `Missing 'field' ,
+  path=interval_report/facet` — so `overlayTotals()` adds the buckets back up. Counts
+  come from the interval bucket's own `count` (exact); sums exist only inside the facet
+  buckets, so their completeness is checked by comparing the facet counts against the
+  interval count, and a short total is flagged `partial` rather than drawn as if whole.
 - Office filters are re-resolved per source: timesheets attribute to the user's office
   (`author_office_name`), jobs to the project's office (`client_office_name`).
 - Points are merged onto the primary's buckets **by label, not by position**. The API

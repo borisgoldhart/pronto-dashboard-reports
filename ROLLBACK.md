@@ -22,18 +22,19 @@ rollback to stick.
 
 ## 2. Putting the code back
 
-Every release is tagged, so there is always a named point to return to.
+Releases are identified by their commit message. The one to return to is:
 
-| Tag | What it is |
-| --- | --- |
-| `demo-safe` | Frozen snapshots. The build demonstrated and verified live on 29 Jul 2026. |
-| `v2-dual-source` | Adds the second data source overlay and moves the Office picker to the top of the graph settings. |
+> **Frozen snapshots: share links whose numbers can't drift or go blank**
+
+That is the build demonstrated and verified live on 29 Jul 2026. Everything after it is
+the second-data-source work.
 
 To undo the dual-source release and redeploy the previous one:
 
 ```bash
-git revert --no-edit v2-dual-source~1..v2-dual-source   # undo, keeping the history
-git push origin main                                    # Vercel rebuilds automatically
+git log --oneline                                # find the Frozen snapshots commit
+git revert --no-edit <that-commit>..HEAD         # undo, keeping the history
+git push origin main                             # Vercel rebuilds automatically
 ```
 
 `revert` is deliberate here rather than `reset --hard`: it adds a new commit that
@@ -41,10 +42,10 @@ undoes the change, so nothing is lost and the work can be reinstated later with
 `git revert` on the revert. Never force-push `main` — that would destroy the record
 Vercel uses to tell its deployments apart.
 
-To look at (rather than restore) exactly what was live at a tag:
+To look at (rather than restore) exactly what was live at a given commit:
 
 ```bash
-git checkout demo-safe          # detached HEAD, look around
+git checkout <commit>           # detached HEAD, look around
 git checkout main               # back to normal
 ```
 
