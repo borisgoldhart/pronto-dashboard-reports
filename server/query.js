@@ -104,6 +104,58 @@ export function comparisonRange(spec) {
   return { from: isoDate(f), to: isoDate(t) };
 }
 
+// ---- second data source (overlay) ------------------------------------------------
+/**
+ * The spec for the overlay query, or null when there isn't one.
+ *
+ * An overlay is deliberately a SINGLE ungrouped total per interval: the primary may be
+ * split into a dozen stacked series, and splitting the second source the same way would
+ * produce an unreadable thicket of lines. Everything that defines the x-axis — dates,
+ * interval, offices, filters — is inherited, because two series can only be compared if
+ * they were measured over the same windows.
+ */
+export function overlaySpecFor(spec) {
+  const o = spec.overlay || {};
+  if (!o.enabled || !o.dataSource) return null;
+  return {
+    ...spec,
+    dataSource: o.dataSource,
+    displayAs: o.displayAs || "count",
+    statsField: o.statsField || undefined,
+    groupBy: "none",          // one line, not one line per group
+    subGroup: "none",
+    limit: 1,
+    // The office filter has to be re-resolved: officeFilters are applied against the
+    // office field OF THE SOURCE, and timesheet rows hang off the user's office while
+    // jobs hang off the project's office. Dropping spec.officeField makes urlsFor()
+    // pick the right one for the overlay source instead of reusing the primary's.
+    officeField: undefined,
+    overlay: undefined,
+    compare: undefined,       // an overlay never carries its own comparison period
+  };
+}
+
+/**
+ * Line up the overlay's buckets with the primary's BY LABEL, not by position.
+ *
+ * The API omits a bucket entirely when a source has no rows in that window, so a
+ * source that is quiet in March comes back one bucket short — and a positional merge
+ * would then draw every later month's value one month early. Missing buckets become
+ * null (a gap in the line), never 0, because "no rows" and "zero hours" are different
+ * claims and only one of them is true.
+ */
+export function alignOverlay(primaryIntervals, overlayShaped) {
+  const byLabel = new Map();
+  (overlayShaped.intervals || []).forEach((iv) => {
+    const total = (iv.groups || []).reduce((a, g) => a + (Number(g.value) || 0), 0);
+    byLabel.set(String(iv.label), total);
+  });
+  return (primaryIntervals || []).map((iv) => {
+    const v = byLabel.get(String(iv.label));
+    return { label: iv.label, value: v === undefined ? null : v };
+  });
+}
+
 /** Total each group across intervals (comparisons are period-level, not per-bucket). */
 function totalsByGroup(shaped) {
   const m = new Map();
@@ -195,6 +247,32 @@ export async function runWidgetQuery(spec, opts = {}) {
     }
   }
 
+  // Second data source, drawn as a line over the primary's bars. A failure here is
+  // reported inside the widget rather than failing the whole render: the bars are
+  // still worth showing, and the tile says why the line is missing.
+  let overlay = null;
+  const ospec = overlaySpecFor(spec);
+  if (ospec) {
+    // try/catch, not just !res.ok: an unknown source or a bad stats field throws out of
+    // buildParams, and that must not take the bars down with it.
+    let res;
+    try {
+      res = await runPeriod(ospec, opts);
+    } catch (err) {
+      res = { ok: false, error: String(err.message || err) };
+    }
+    overlay = res.ok
+      ? {
+          dataSource: ospec.dataSource,
+          displayAs: ospec.displayAs,
+          statsField: ospec.statsField || null,
+          cached: res.cached,
+          url: res.urls[0],
+          points: alignOverlay(shaped.intervals, normalize(res.data, normOpts(ospec))),
+        }
+      : { dataSource: ospec.dataSource, displayAs: ospec.displayAs, error: res.error || "Could not load the second data source." };
+  }
+
   return {
     ok: true,
     cached: primary.cached,
@@ -203,6 +281,7 @@ export async function runWidgetQuery(spec, opts = {}) {
     ...primary.meta,
     ...shaped,
     ...(compare ? { compare, deltas } : {}),
+    ...(overlay ? { overlay } : {}),
     raw: primary.data,          // callers strip this unless ?raw=1 was asked for
   };
 }
