@@ -210,6 +210,18 @@
 
       <label>Title<input id="f_title" type="text" placeholder="(auto)" /></label>
 
+      <!-- Offices sit here, not under "More filters": in practice this is the first
+           thing people set, and it also narrows (and speeds up) every query below. -->
+      <fieldset class="filter-box">
+        <legend>Offices</legend>
+        <div class="office-picker">
+          <input id="f_officeSearch" type="text" autocomplete="off" placeholder="Search offices to add&hellip;" />
+          <div id="officeMenu" class="office-menu"></div>
+        </div>
+        <div id="officeChips" class="chips"></div>
+        <div class="office-hint">Narrows the report (also speeds it up).</div>
+      </fieldset>
+
       <label>Data Source<select id="f_dataSource"></select></label>
 
       <fieldset class="group-box">
@@ -257,6 +269,28 @@
         </select>
       </label>
 
+      <!-- Second data source. Collapsed by default and only offered for the two column
+           charts an overlay line reads well on — same reveal pattern as "More filters". -->
+      <details class="reveal" id="overlayBox">
+        <summary>Second data source<span id="overlayState" class="reveal-state"></span></summary>
+        <div class="reveal-body">
+          <label>Source
+            <select id="f_overlaySource"></select>
+          </label>
+          <div class="two" id="overlayOpts" style="display:none">
+            <label>Show as<select id="f_overlayDisplayAs"></select></label>
+            <label id="overlayStatsWrap" style="display:none">Field
+              <select id="f_overlayStatsField">
+                <option value="">(default for source)</option>
+                <option value="hours">hours</option>
+                <option value="time">time</option>
+              </select>
+            </label>
+          </div>
+          <span class="field-hint">Drawn as a line on its own right-hand axis. Uses the same dates, interval, offices and filters as the settings above, so the two line up.</span>
+        </div>
+      </details>
+
       <label>Date range<select id="f_datePreset"></select></label>
       <div class="two">
         <label>Date from<input id="f_dateFrom" type="date" /></label>
@@ -284,16 +318,6 @@
       <details class="reveal">
         <summary>More filters &amp; options</summary>
         <div class="reveal-body">
-          <fieldset class="filter-box">
-            <legend>Offices</legend>
-            <div class="office-picker">
-              <input id="f_officeSearch" type="text" autocomplete="off" placeholder="Search offices to add&hellip;" />
-              <div id="officeMenu" class="office-menu"></div>
-            </div>
-            <div id="officeChips" class="chips"></div>
-            <div class="office-hint">Narrows the report (also speeds it up).</div>
-          </fieldset>
-
           <fieldset class="filter-box">
             <legend>Filters</legend>
             <div id="filterRows"></div>

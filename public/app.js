@@ -63,6 +63,13 @@ const COMPARE_TYPES = new Set(["diverging", "comparebar", "bubble"]);
 // One value per group: no sub-group and no interval. Kept separate from SINGLE_DIM
 // because SINGLE_DIM also selects the pie renderer, which a map must not use.
 const NO_SUBGROUP = new Set(["pie", "donut", "map"]);
+// A second data source is drawn as a line across the interval, so it only makes sense
+// on the vertical column charts: those have a time x-axis and a spare right-hand axis.
+// Horizontal bars would need the line drawn sideways, and pie/map have no axis at all.
+const OVERLAY_TYPES = new Set(["bar", "stacked"]);
+// One fixed colour for the overlay, deliberately outside every theme palette — the line
+// is a different measure on a different axis, and shouldn't read as another series.
+const OVERLAY_COLOR = "#2b7fc0";
 const CHART_TYPES = [
   { desc: "Grouped columns — one bar per series, side by side.", value: "bar", label: "Bar", icon: `<rect x="2" y="9" width="3" height="7"/><rect x="7" y="5" width="3" height="11"/><rect x="12" y="7" width="3" height="9"/>` },
   { desc: "Columns split into segments that add up to the total.", value: "stacked", label: "Stacked column", icon: `<rect x="3" y="10" width="5" height="6"/><rect x="3" y="5" width="5" height="4" opacity=".55"/><rect x="10" y="8" width="5" height="8"/><rect x="10" y="4" width="5" height="3" opacity=".55"/>` },
@@ -423,22 +430,63 @@ function buildOption(norm, chartType, spec, theme, width = 800) {
       right: horizontal ? 4 : undefined, bottom: horizontal ? undefined : 4 },
   ] : undefined;
 
+  // ---- second data source, drawn as a line on its own axis -------------------------
+  // The two measures are in different units (projects vs hours) and routinely differ by
+  // 10-100x, so sharing the left axis would flatten one of them to nothing. The overlay
+  // therefore gets its own right-hand axis, tinted to match the line so it's obvious
+  // which axis reads which.
+  const ov = norm.overlay && Array.isArray(norm.overlay.points) ? norm.overlay : null;
+  const ovName = ov ? overlayLabel(ov) : "";
+  const ovSeries = ov ? [{
+    name: ovName,
+    type: "line",
+    yAxisIndex: 1,
+    z: 5,                       // above the bars
+    smooth: true,
+    connectNulls: false,        // a month with no rows is a gap, not a dive to zero
+    symbol: "circle", symbolSize: 7,
+    lineStyle: { width: 3, color: OVERLAY_COLOR },
+    itemStyle: { color: OVERLAY_COLOR },
+    data: ov.points.map((p) => p.value),
+  }] : [];
+  const ovAxis = ov ? [{
+    type: "value",
+    position: "right",
+    name: ovName,
+    nameTextStyle: { fontSize: 10, color: OVERLAY_COLOR },
+    splitLine: { show: false },                       // one grid only — two sets fight
+    axisLine: { show: true, lineStyle: { color: OVERLAY_COLOR } },
+    axisLabel: { color: OVERLAY_COLOR, formatter: (v) => (v >= 1000 ? (v / 1000) + "k" : v) },
+  }] : [];
+
   return {
     color,
     ...(dataZoom ? { dataZoom } : {}),
-    // item trigger => hovering a bar/line point shows ONLY that series, not the whole key
-    tooltip: {
+    // item trigger => hovering a bar/line point shows ONLY that series, not the whole key.
+    // With an overlay that's wrong: the entire point is reading both measures at the same
+    // moment in time, so hovering a column has to show the bars AND the line together.
+    tooltip: ov ? {
+      trigger: "axis",
+      confine: true,
+      axisPointer: { type: "shadow" },
+    } : {
       trigger: "item",
       confine: true,
       formatter: (p) => `${escapeHtml(p.seriesName)}<br/>${escapeHtml(String(p.name))}: <b>${money(p.value)}</b>`,
     },
     legend: { type: "scroll", top: 0 },
-    grid: { left: leftPx, right: dense && horizontal ? 34 : 18, top: 34,
+    grid: { left: leftPx, right: ov ? 66 : (dense && horizontal ? 34 : 18), top: 34,
       bottom: (dense && !horizontal ? 46 : 30) + Math.round(catLabelH) },
     xAxis: horizontal ? valueAxis : catAxis,
-    yAxis: horizontal ? catAxis : valueAxis,
-    series: s,
+    yAxis: horizontal ? [catAxis, ...ovAxis] : [valueAxis, ...ovAxis],
+    series: [...s, ...ovSeries],
   };
+}
+
+/** Legend/axis name for an overlay: "Timesheet Data (hours)". */
+function overlayLabel(ov) {
+  const unit = ov.displayAs && ov.displayAs !== "count" ? (ov.statsField || ov.displayAs) : "count";
+  return `${dsLabel(ov.dataSource)} (${unit})`;
 }
 
 // ---------- widget tile ----------
@@ -603,7 +651,11 @@ function fmtDateShort(d) {
   return `${+m[3]} ${MON[+m[2] - 1]} ${m[1]}`;
 }
 function autoTitleFor(spec) {
-  return `${dsLabel(spec.dataSource)} · ${fmtDateShort(spec.dateFrom)}–${fmtDateShort(spec.dateTo)}`;
+  const ov = spec.overlay || {};
+  const src = ov.enabled && ov.dataSource
+    ? `${dsLabel(spec.dataSource)} vs ${dsLabel(ov.dataSource)}`
+    : dsLabel(spec.dataSource);
+  return `${src} · ${fmtDateShort(spec.dateFrom)}–${fmtDateShort(spec.dateTo)}`;
 }
 
 // Fill the header ⓘ hover popover with the widget's query + any filters.
@@ -624,6 +676,11 @@ function updateInfo(w) {
     ...(hasSub ? [["Sub-group", fieldLabel(s.subGroup)]] : []),
     ["Interval", hasSub ? "n/a (sub-grouped)" : ivLabel(s.interval)],
     ["Measure", measure],
+    ...(s.overlay && s.overlay.enabled && s.overlay.dataSource
+      ? [["Overlay", w.lastOverlay && w.lastOverlay.error
+          ? `⚠ ${w.lastOverlay.error}`
+          : `${dsLabel(s.overlay.dataSource)} (${s.overlay.displayAs === "count" ? "count" : (s.overlay.statsField || s.overlay.displayAs)})`]]
+      : []),
     ["Dates", `${fmtDateShort(s.dateFrom)} – ${fmtDateShort(s.dateTo)}`],
   ];
   let html = rows.map(([k, v]) => `<div class="ip-row"><span>${k}</span><b>${escapeHtml(v || "—")}</b></div>`).join("");
@@ -693,13 +750,17 @@ function exportWidget(w, kind) {
     return;
   }
   if (kind === "csv") {
-    // rows = intervals, columns = series
+    // rows = intervals, columns = series (+ the overlay as one more column, so an
+    // exported comparison carries both measures rather than only the bars)
     const cols = d.series || [];
+    const ovPts = d.overlay && Array.isArray(d.overlay.points) ? d.overlay.points : null;
+    const ovCol = ovPts ? [overlayLabel(d.overlay)] : [];
     const esc = (v) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const lines = [["Interval", ...cols].map(esc).join(",")];
-    (d.intervals || []).forEach((iv) => {
+    const lines = [["Interval", ...cols, ...ovCol].map(esc).join(",")];
+    (d.intervals || []).forEach((iv, i) => {
       const byName = new Map((iv.groups || []).map((g) => [g.name, g.value]));
-      lines.push([fmtLabel(iv.label, w.spec.interval), ...cols.map((c) => byName.get(c) ?? 0)].map(esc).join(","));
+      const ovVal = ovPts ? [ovPts[i] && ovPts[i].value !== null ? ovPts[i].value : ""] : [];
+      lines.push([fmtLabel(iv.label, w.spec.interval), ...cols.map((c) => byName.get(c) ?? 0), ...ovVal].map(esc).join(","));
     });
     download(`${base}.csv`, lines.join("\n"), "text/csv;charset=utf-8");
   }
@@ -766,11 +827,19 @@ async function renderWidget(w, { nocache = false } = {}) {
     w.lastUrl = res.url; w.lastUrls = res.urls; w.lastAuth = res.authUsed; w.lastSeconds = res.seconds; w.lastChunked = res.chunked;
     w.fetchedAs = res.fetchedAs || null;
     w.lastCompare = res.compare || null;
+    w.lastOverlay = res.overlay || null;
     updateInfo(w);
     if (!res.ok) { setMsg(w, (res.error || "Query failed") + "\n\nRequest: " + (res.url || "(none)"), true); return; }
     setMsg(w, "");
-    w.el.querySelector(".w-cached").textContent = SNAPSHOT_ID ? "frozen" : (res.cached ? "cached" : "");
-    w.lastData = { intervals: res.intervals, series: res.series }; // for CSV/JSON export
+    // A second source that failed must say so in the header. The bars are still
+    // correct and worth showing, but a silently absent line would read as "no
+    // timesheet hours this period", which is a different and false claim.
+    const badge = w.el.querySelector(".w-cached");
+    badge.textContent = res.overlay && res.overlay.error
+      ? "second source unavailable"
+      : (SNAPSHOT_ID ? "frozen" : (res.cached ? "cached" : ""));
+    badge.title = res.overlay && res.overlay.error ? String(res.overlay.error) : "";
+    w.lastData = { intervals: res.intervals, series: res.series, overlay: res.overlay || null }; // for CSV/JSON export
     if (!res.intervals || res.intervals.length === 0) {
       setMsg(w, "No data returned for this query.\n\nRequest: " + (res.url || "(none)") + "\n(Hover ⓘ to inspect; click the URL to open it directly.)", false);
       return;
@@ -1024,6 +1093,21 @@ function initEditorOptions() {
   initFieldPicker("subGroup", "— No sub-group —");
   fillSelect($("f_interval"), OPTIONS.intervals);
   fillSelect($("f_displayAs"), OPTIONS.displayAs);
+  // Second data source. "None" first and selected by default: the overlay is opt-in.
+  $("f_overlaySource").innerHTML = `<option value="">None</option>` +
+    OPTIONS.dataSources.map((d) => `<option value="${d.value}">${escapeHtml(d.label)}</option>`).join("");
+  fillSelect($("f_overlayDisplayAs"), OPTIONS.displayAs);
+  $("f_overlaySource").addEventListener("change", () => {
+    // Picking a source pre-selects the measure that source is actually built for —
+    // Timesheet Data means hours, Jobs Data means a count of projects.
+    const def = (OPTIONS.dataSources.find((d) => d.value === $("f_overlaySource").value) || {}).defaultStatsField;
+    if ($("f_overlaySource").value) {
+      $("f_overlayDisplayAs").value = def ? "sum" : "count";
+      $("f_overlayStatsField").value = def || "";
+    }
+    syncOverlay();
+  });
+  $("f_overlayDisplayAs").addEventListener("change", syncOverlay);
   $("f_datePreset").innerHTML = DATE_PRESETS.map((p) => `<option value="${p}">${p}</option>`).join("");
   $("f_theme").innerHTML = THEMES.map((t) => `<option value="${t.value}">${escapeHtml(t.label)}</option>`).join("");
   renderChartTypes();
@@ -1125,6 +1209,27 @@ function syncCompare() {
     : "";
 }
 
+/** Second-data-source controls: offered only for the column charts that can draw the
+ *  line, and self-describing while collapsed so a live overlay is never hidden. */
+function syncOverlay() {
+  const allowed = OVERLAY_TYPES.has(selectedChartType);
+  const box = $("overlayBox");
+  box.style.display = allowed ? "" : "none";
+  if (!allowed) {
+    // Switching to a chart that can't show it also turns it off — leaving the value set
+    // would mean a widget quietly running a second query it never draws.
+    $("f_overlaySource").value = "";
+    box.open = false;
+  }
+  const src = $("f_overlaySource").value;
+  $("overlayOpts").style.display = src ? "grid" : "none";
+  $("overlayStatsWrap").style.display = src && $("f_overlayDisplayAs").value !== "count" ? "" : "none";
+  $("overlayOpts").classList.toggle("one", !(src && $("f_overlayDisplayAs").value !== "count"));
+  const state = $("overlayState");
+  state.textContent = src ? dsLabel(src) : "None";
+  state.classList.toggle("on", Boolean(src));
+}
+
 /** Chart-type constraints.
  *  • pie/donut  — single dimension: no sub-group, no interval
  *  • comparison — totals each group over the whole period and compares it with another,
@@ -1171,6 +1276,7 @@ function syncChartTypeConstraints() {
 
 
   syncCompare();
+  syncOverlay();
   syncSubGroup();
 }
 
@@ -1209,6 +1315,7 @@ function defaultSpec() {
     dateFrom: iso(from), dateTo: iso(to),
     limit: 10, subGroupLimit: 6, subGroupMode: "per-group", showOther: true,
     compare: { enabled: false, mode: "previous-year", dateFrom: "", dateTo: "" },
+    overlay: { enabled: false, dataSource: "", displayAs: "count", statsField: "" },
     filters: [], officeFilters: [],
   };
 }
@@ -1251,6 +1358,13 @@ function openEditor(id) {
   $("f_compareMode").value = cmp.mode || "previous-year";
   $("f_compareFrom").value = cmp.dateFrom || "";
   $("f_compareTo").value = cmp.dateTo || "";
+  const ovr = w.spec.overlay || {};
+  $("f_overlaySource").value = ovr.enabled ? (ovr.dataSource || "") : "";
+  $("f_overlayDisplayAs").value = ovr.displayAs || "count";
+  $("f_overlayStatsField").value = ovr.statsField || "";
+  // Open the section when this widget already has an overlay, so an existing setting
+  // is never hidden behind a fold the user has no reason to suspect.
+  $("overlayBox").open = Boolean(ovr.enabled && ovr.dataSource);
   renderFilterRows(w.spec.filters);
   // offices
   selectedOffices = [...(w.spec.officeFilters || [])];
@@ -1288,6 +1402,14 @@ function applyEditor() {
       mode: $("f_compareMode").value,
       dateFrom: $("f_compareFrom").value,
       dateTo: $("f_compareTo").value,
+    },
+    overlay: {
+      // Only the chart types that can actually draw the line may carry one, so
+      // switching a widget to pie/map can't leave an invisible second query running.
+      enabled: OVERLAY_TYPES.has(selectedChartType) && Boolean($("f_overlaySource").value),
+      dataSource: $("f_overlaySource").value,
+      displayAs: $("f_overlayDisplayAs").value || "count",
+      statsField: $("f_overlayStatsField").value || "",
     },
     showOther: $("f_showOther").checked,
     datePreset: $("f_datePreset").value,

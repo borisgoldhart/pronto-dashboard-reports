@@ -257,6 +257,10 @@ body {
 .reveal > summary:hover { background: #f4f8fc; border-radius: 4px; }
 .reveal-body { padding: 4px 12px 2px; border-top: 1px solid var(--line); }
 .reveal-body .filter-box { margin-bottom: 12px; }
+/* Shows the chosen second source on the collapsed summary, so you can tell an
+   overlay is switched on without opening the section. */
+.reveal-state { float: right; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--muted); }
+.reveal-state.on { color: var(--pronto-blue-d); }
 
 /* Chart-type hover panel — anchored below the whole grid so it never clips */
 .chart-types { position: relative; }
