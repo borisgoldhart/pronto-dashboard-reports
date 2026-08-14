@@ -63,10 +63,9 @@ const COMPARE_TYPES = new Set(["diverging", "comparebar", "bubble"]);
 // One value per group: no sub-group and no interval. Kept separate from SINGLE_DIM
 // because SINGLE_DIM also selects the pie renderer, which a map must not use.
 const NO_SUBGROUP = new Set(["pie", "donut", "map"]);
-// A second data source is drawn as a line across the interval, so it only makes sense
-// on the vertical column charts: those have a time x-axis and a spare right-hand axis.
-// Horizontal bars would need the line drawn sideways, and pie/map have no axis at all.
-const OVERLAY_TYPES = new Set(["bar", "stacked"]);
+// A second data source is one value per interval, so it is offered exactly when an
+// Interval is — see intervalLocked(). That is the whole rule: no separate list of chart
+// types to keep in step, and nothing on screen the user has to reason about separately.
 // One fixed colour for the overlay, deliberately outside every theme palette — the line
 // is a different measure on a different axis, and shouldn't read as another series.
 const OVERLAY_COLOR = "#2b7fc0";
@@ -435,12 +434,15 @@ function buildOption(norm, chartType, spec, theme, width = 800) {
   // 10-100x, so sharing the left axis would flatten one of them to nothing. The overlay
   // therefore gets its own right-hand axis, tinted to match the line so it's obvious
   // which axis reads which.
+  // The extra axis is always the second VALUE axis, which is the y axis on a column
+  // chart and the x axis on a horizontal one — so the line runs alongside the bars
+  // either way rather than across them.
   const ov = norm.overlay && Array.isArray(norm.overlay.points) ? norm.overlay : null;
   const ovName = ov ? overlayLabel(ov) : "";
   const ovSeries = ov ? [{
     name: ovName,
     type: "line",
-    yAxisIndex: 1,
+    ...(horizontal ? { xAxisIndex: 1 } : { yAxisIndex: 1 }),
     z: 5,                       // above the bars
     smooth: true,
     connectNulls: false,        // a month with no rows is a gap, not a dive to zero
@@ -451,7 +453,7 @@ function buildOption(norm, chartType, spec, theme, width = 800) {
   }] : [];
   const ovAxis = ov ? [{
     type: "value",
-    position: "right",
+    position: horizontal ? "top" : "right",
     name: ovName,
     nameTextStyle: { fontSize: 10, color: OVERLAY_COLOR },
     splitLine: { show: false },                       // one grid only — two sets fight
@@ -475,10 +477,11 @@ function buildOption(norm, chartType, spec, theme, width = 800) {
       formatter: (p) => `${escapeHtml(p.seriesName)}<br/>${escapeHtml(String(p.name))}: <b>${money(p.value)}</b>`,
     },
     legend: { type: "scroll", top: 0 },
-    grid: { left: leftPx, right: ov ? 66 : (dense && horizontal ? 34 : 18), top: 34,
+    grid: { left: leftPx, right: ov && !horizontal ? 66 : (dense && horizontal ? 34 : 18),
+      top: ov && horizontal ? 56 : 34,        // room for the overlay's axis along the top
       bottom: (dense && !horizontal ? 46 : 30) + Math.round(catLabelH) },
-    xAxis: horizontal ? valueAxis : catAxis,
-    yAxis: horizontal ? [catAxis, ...ovAxis] : [valueAxis, ...ovAxis],
+    xAxis: horizontal ? [valueAxis, ...ovAxis] : catAxis,
+    yAxis: horizontal ? catAxis : [valueAxis, ...ovAxis],
     series: [...s, ...ovSeries],
   };
 }
@@ -677,8 +680,8 @@ function updateInfo(w) {
     ["Interval", hasSub ? "n/a (sub-grouped)" : ivLabel(s.interval)],
     ["Measure", measure],
     ...(s.overlay && s.overlay.enabled && s.overlay.dataSource
-      ? [["Overlay", w.lastOverlay && w.lastOverlay.error
-          ? `⚠ ${w.lastOverlay.error}`
+      ? [["Overlay", w.lastOverlay && (w.lastOverlay.error || w.lastOverlay.note)
+          ? `⚠ ${w.lastOverlay.error || w.lastOverlay.note}`
           : `${dsLabel(s.overlay.dataSource)} (${s.overlay.displayAs === "count" ? "count" : (s.overlay.statsField || s.overlay.displayAs)})`]]
       : []),
     ["Dates", `${fmtDateShort(s.dateFrom)} – ${fmtDateShort(s.dateTo)}`],
@@ -835,10 +838,11 @@ async function renderWidget(w, { nocache = false } = {}) {
     // correct and worth showing, but a silently absent line would read as "no
     // timesheet hours this period", which is a different and false claim.
     const badge = w.el.querySelector(".w-cached");
-    badge.textContent = res.overlay && res.overlay.error
-      ? "second source unavailable"
-      : (SNAPSHOT_ID ? "frozen" : (res.cached ? "cached" : ""));
-    badge.title = res.overlay && res.overlay.error ? String(res.overlay.error) : "";
+    const ovNote = res.overlay && (res.overlay.error || res.overlay.note);
+    badge.textContent = res.overlay && res.overlay.error ? "second source unavailable"
+      : res.overlay && res.overlay.partial ? "second source partial"
+        : (SNAPSHOT_ID ? "frozen" : (res.cached ? "cached" : ""));
+    badge.title = ovNote ? String(ovNote) : "";
     w.lastData = { intervals: res.intervals, series: res.series, overlay: res.overlay || null }; // for CSV/JSON export
     if (!res.intervals || res.intervals.length === 0) {
       setMsg(w, "No data returned for this query.\n\nRequest: " + (res.url || "(none)") + "\n(Hover ⓘ to inspect; click the URL to open it directly.)", false);
@@ -1181,10 +1185,17 @@ let preservedLimit = null, preservedOther = null;   // restored when leaving the
  *  period), and when a sub-group is set (the API honours one or the other). Centralised
  *  so the chart-type and sub-group rules can't fight — and it restores the user's
  *  previous choice when the interval becomes available again. */
-function applyIntervalLock() {
+/** True when this chart can't have an interval: a single-dimension type, a
+ *  period-comparison type (they total the whole window), or a sub-group is set (the API
+ *  honours one or the other). Shared with the second-data-source rule. */
+function intervalLocked() {
   const t = selectedChartType;
   const hasSub = $("f_subGroup").value && $("f_subGroup").value !== "none";
-  const lock = NO_SUBGROUP.has(t) || COMPARE_TYPES.has(t) || hasSub;
+  return NO_SUBGROUP.has(t) || COMPARE_TYPES.has(t) || hasSub;
+}
+
+function applyIntervalLock() {
+  const lock = intervalLocked();
   const el = $("f_interval");
   if (lock) {
     if (!el.disabled && el.value !== "0") preservedInterval = el.value;  // remember before forcing
@@ -1212,12 +1223,14 @@ function syncCompare() {
 /** Second-data-source controls: offered only for the column charts that can draw the
  *  line, and self-describing while collapsed so a live overlay is never hidden. */
 function syncOverlay() {
-  const allowed = OVERLAY_TYPES.has(selectedChartType);
+  // One rule: a second source is one value per interval, so it is available exactly
+  // when an Interval is. Setting a sub-group or picking a pie takes both away together.
+  const allowed = !intervalLocked();
   const box = $("overlayBox");
   box.style.display = allowed ? "" : "none";
   if (!allowed) {
-    // Switching to a chart that can't show it also turns it off — leaving the value set
-    // would mean a widget quietly running a second query it never draws.
+    // Losing the interval also turns it off — leaving the value set would mean a widget
+    // quietly running a second query it can no longer draw.
     $("f_overlaySource").value = "";
     box.open = false;
   }
@@ -1297,6 +1310,7 @@ function syncSubGroup() {
     $("subGroupModeHint").textContent = "";
   }
   applyIntervalLock();
+  syncOverlay();     // a sub-group removes the interval, and with it the second source
 }
 
 function syncStatsFieldVisibility() {
@@ -1404,9 +1418,9 @@ function applyEditor() {
       dateTo: $("f_compareTo").value,
     },
     overlay: {
-      // Only the chart types that can actually draw the line may carry one, so
-      // switching a widget to pie/map can't leave an invisible second query running.
-      enabled: OVERLAY_TYPES.has(selectedChartType) && Boolean($("f_overlaySource").value),
+      // Only a widget that still has an interval may carry one, so switching to a pie
+      // or setting a sub-group can't leave an invisible second query running.
+      enabled: !intervalLocked() && Boolean($("f_overlaySource").value),
       dataSource: $("f_overlaySource").value,
       displayAs: $("f_overlayDisplayAs").value || "count",
       statsField: $("f_overlayStatsField").value || "",
