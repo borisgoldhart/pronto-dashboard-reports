@@ -418,13 +418,22 @@ function buildOption(norm, chartType, spec, theme, width = 800) {
   const barCount = (stacked ? 1 : s.length) * cats.length;
   const dense = s.length > 1 && barCount > 40;
   const visibleCats = Math.max(3, Math.floor(40 / Math.max(1, s.length)));
+  // A zoom the user set is part of what the widget IS — it's the window they chose to
+  // show — so it's stored on the spec and restored here, which also means it travels
+  // with a shared link and is frozen into a snapshot. Percentages rather than category
+  // indices, so the window survives the data growing by a bucket.
+  const savedZoom = spec.zoom && typeof spec.zoom.start === "number" && typeof spec.zoom.end === "number"
+    ? spec.zoom : null;
+  const zoomWindow = savedZoom
+    ? { start: savedZoom.start, end: savedZoom.end }
+    : { startValue: 0, endValue: visibleCats - 1 };
   const dataZoom = dense ? [
     { type: "inside", orient: horizontal ? "vertical" : "horizontal",
       yAxisIndex: horizontal ? 0 : undefined, xAxisIndex: horizontal ? undefined : 0,
-      startValue: 0, endValue: visibleCats - 1, zoomLock: false },
+      ...zoomWindow, zoomLock: false },
     { type: "slider", orient: horizontal ? "vertical" : "horizontal",
       yAxisIndex: horizontal ? 0 : undefined, xAxisIndex: horizontal ? undefined : 0,
-      startValue: 0, endValue: visibleCats - 1,
+      ...zoomWindow,
       width: horizontal ? 12 : undefined, height: horizontal ? undefined : 14,
       right: horizontal ? 4 : undefined, bottom: horizontal ? undefined : 4 },
   ] : undefined;
@@ -943,6 +952,18 @@ async function renderWidget(w, { nocache = false } = {}) {
       // Keep the chart sized to its tile through load, drag-resize, and window changes.
       w._ro = new ResizeObserver(() => { if (w.chart) w.chart.resize(); });
       w._ro.observe(chartEl);
+      // Remember where the user scrolled a dense chart to. Recorded onto the spec so it
+      // saves, shares and freezes with everything else; like moving a tile, it isn't
+      // persisted until Save dashboard. Read-only viewers can still pan — it just
+      // doesn't follow them home.
+      w.chart.on("datazoom", () => {
+        if (!w.spec || PUBLIC_VIEW || SNAPSHOT_ID) return;
+        const dz = (w.chart.getOption().dataZoom || [])[0];
+        if (!dz || typeof dz.start !== "number" || typeof dz.end !== "number") return;
+        // A full-width window is the default, not a choice — don't store it.
+        if (dz.start <= 0.01 && dz.end >= 99.99) delete w.spec.zoom;
+        else w.spec.zoom = { start: dz.start, end: dz.end };
+      });
     }
     if (w.chartType === "map") {
       // Registered once per session; a failure here is shown rather than leaving a blank tile.
@@ -1212,6 +1233,9 @@ function initEditorOptions() {
   // The API honours EITHER an interval OR a sub-group, never both (verified). So a
   // sub-group forces "No interval" and locks the interval picker.
   $("f_subGroup").addEventListener("change", syncSubGroup);
+  // Choosing "no grouping" has to take the sub-group away with it.
+  $("f_groupBy").addEventListener("change", () =>
+    syncSubGroupAvailability(NO_SUBGROUP.has(selectedChartType) || COMPARE_TYPES.has(selectedChartType)));
   $("f_interval").addEventListener("change", syncSubGroup);
   $("f_subGroupMode").addEventListener("change", syncSubGroup);
   $("f_compareMode").addEventListener("change", syncCompare);
@@ -1332,6 +1356,24 @@ function syncOverlay() {
   state.classList.toggle("on", Boolean(src));
 }
 
+/**
+ * Whether a sub-group can be offered at all.
+ *
+ * A sub-group nests inside a group, so with Group By set to "no grouping" there is
+ * nothing for it to nest in — the API would answer with the sub-group's own totals,
+ * which is a different report from the one being asked for. Hidden rather than
+ * disabled: a dead control is just noise.
+ */
+function syncSubGroupAvailability(blockedByChartType) {
+  const noGroup = !$("f_groupBy").value || $("f_groupBy").value === "none";
+  const noSub = blockedByChartType || noGroup;
+  if (noSub) { $("f_subGroup").value = "none"; $("f_subGroup").disabled = true; }
+  else { $("f_subGroup").disabled = false; }
+  $("subGroupBox").style.display = noSub ? "none" : "";
+  syncFieldPicker("subGroup");
+  syncSubGroup();
+}
+
 /** Chart-type constraints.
  *  • pie/donut  — single dimension: no sub-group, no interval
  *  • comparison — totals each group over the whole period and compares it with another,
@@ -1344,13 +1386,7 @@ function syncChartTypeConstraints() {
   // The comparison period only applies to the chart types that plot a delta.
   $("compareBox").style.display = isCompare ? "block" : "none";
 
-  const noSub = single || isCompare;
-  if (noSub) { $("f_subGroup").value = "none"; $("f_subGroup").disabled = true; }
-  else { $("f_subGroup").disabled = false; }
-  // Hide the section entirely rather than showing a dead control; the chart-type
-  // hover already explains which types support sub-grouping.
-  $("subGroupBox").style.display = noSub ? "none" : "";
-  syncFieldPicker("subGroup");
+  syncSubGroupAvailability(single || isCompare);
 
   // A map can only plot a country, so Group By is constrained to the geo fields.
   const isMap = selectedChartType === "map";
@@ -1538,6 +1574,9 @@ function applyEditor() {
 
   if (editingId) {
     const w = widgets.get(editingId);
+    // The form doesn't own the zoom window, so carry it across an edit rather than
+    // silently resetting the view every time someone tweaks a filter.
+    if (w.spec && w.spec.zoom) spec.zoom = w.spec.zoom;
     w.title = title; w.chartType = chartType; w.theme = theme; w.spec = spec; w.autoTitle = autoTitle;
     w.lastEditedBy = CURRENT_USER ? { ...CURRENT_USER, at: new Date().toISOString() } : null;
     w.el.querySelector(".w-title").textContent = title;
@@ -1610,7 +1649,7 @@ function applyEditMode() {
   // Strict view-only for share-link visitors (non-creators): no Add widget,
   // Share, Save — and no Dashboards list. Just the report + per-widget refresh.
   const ro = !CURRENT_DASH.canEdit;
-  ["addBtn", "saveBtn", "shareBtn", "dashListBtn"].forEach((id) => {
+  ["addBtn", "saveBtn", "shareBtn", "dashListBtn", "tidyBtn"].forEach((id) => {
     const el = $(id); if (el) el.style.display = ro ? "none" : "";
   });
   const badge = $("roBadge");
@@ -2130,6 +2169,19 @@ async function main() {
   grid.on("resize", (e, el) => resizeChart(el));
   grid.on("resizestop", (e, el) => resizeChart(el));
   window.addEventListener("resize", () => widgets.forEach((w) => w.chart && w.chart.resize()));
+
+  // Tidy up: pull every widget up into the gap above it. Deliberately a button rather
+  // than always-on gravity (float:false) — a board people have already arranged should
+  // not rearrange itself under them, but they should be able to ask for it. Like any
+  // layout change it isn't persisted until Save dashboard.
+  $("tidyBtn").onclick = () => {
+    try {
+      grid.compact();
+      $("status").textContent = "tidied — Save dashboard to keep it";
+      setTimeout(() => ($("status").textContent = ""), 3000);
+      widgets.forEach((w) => w.chart && w.chart.resize());
+    } catch (e) { console.warn("compact failed:", e); }
+  };
 
   $("addBtn").onclick = () => openEditor(null);
   $("saveBtn").onclick = openDashSettings;          // saving now goes via the settings modal
