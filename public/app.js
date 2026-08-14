@@ -209,7 +209,7 @@ function resolveMapCountry(raw) {
 }
 
 // ---------- ECharts option builder ----------
-function buildOption(norm, chartType, spec, theme, width = 800, widget = null) {
+function buildOption(norm, chartType, spec, theme, width = 800, widget = null, height = 400) {
   const series = norm.series;
   const color = themeColors(theme);
   const money = (v) => (v == null ? "" : Number(v).toLocaleString());
@@ -349,14 +349,30 @@ function buildOption(norm, chartType, spec, theme, width = 800, widget = null) {
     const totals = {};
     norm.intervals.forEach((iv) => iv.groups.forEach((g) => { totals[g.name] = (totals[g.name] || 0) + g.value; }));
     const data = series.map((n) => ({ name: n, value: totals[n] || 0 })).sort((a, b) => b.value - a.value);
+    // The legend is the hard part here, not the pie. Timesheet activity names run to a
+    // full sentence, and a right-anchored vertical legend grows LEFTWARDS to fit them —
+    // straight across the chart. So the legend gets a column of its own, its labels are
+    // truncated to that column, and the pie is centred in whatever is left. Nothing
+    // overlaps at any tile size, and the full name is a hover away in both directions:
+    // the legend has its own tooltip, and the slices already had one.
+    const legendW = Math.max(120, Math.min(300, Math.round(width * 0.36)));
+    const pieAreaW = Math.max(80, width - legendW - 20);
+    const radiusPx = Math.max(30, Math.min(pieAreaW, height - 30) * 0.45);
     return {
       color,
       tooltip: { trigger: "item", confine: true, formatter: (p) => `${escapeHtml(p.name)}<br/><b>${money(p.value)}</b> (${p.percent}%)` },
-      legend: { type: "scroll", orient: "vertical", right: 4, top: 8, bottom: 8 },
+      legend: {
+        type: "scroll", orient: "vertical",
+        right: 6, top: 6, bottom: 6, width: legendW,
+        itemWidth: 12, itemHeight: 10, itemGap: 7,
+        textStyle: { fontSize: 11.5, width: legendW - 24, overflow: "truncate", ellipsis: "…" },
+        tooltip: { show: true, confine: true },      // the full name, for the truncated ones
+        pageIconSize: 9, pageTextStyle: { fontSize: 10 },
+      },
       series: [{
         type: "pie",
-        radius: chartType === "donut" ? ["45%", "72%"] : "70%",
-        center: ["38%", "52%"],
+        radius: chartType === "donut" ? [radiusPx * 0.62, radiusPx] : radiusPx,
+        center: [Math.round(pieAreaW / 2) + 6, "50%"],
         data, label: { show: false }, minShowLabelAngle: 6,
       }],
     };
@@ -999,6 +1015,7 @@ async function renderWidget(w, { nocache = false } = {}) {
         : (SNAPSHOT_ID ? "frozen" : (res.cached ? "cached" : ""));
     badge.title = ovNote ? String(ovNote) : "";
     w.lastData = { intervals: res.intervals, series: res.series, overlay: res.overlay || null }; // for CSV/JSON export
+    w.lastRes = res;                     // kept so a resize can rebuild the chart option
     if (!res.intervals || res.intervals.length === 0) {
       setMsg(w, "No data returned for this query.\n\nRequest: " + (res.url || "(none)") + "\n(Hover ⓘ to inspect; click the URL to open it directly.)", false);
       return;
@@ -1007,7 +1024,17 @@ async function renderWidget(w, { nocache = false } = {}) {
       const chartEl = w.el.querySelector(".w-chart");
       w.chart = echarts.init(chartEl);
       // Keep the chart sized to its tile through load, drag-resize, and window changes.
-      w._ro = new ResizeObserver(() => { if (w.chart) w.chart.resize(); });
+      // Resizing also has to REBUILD the option, not just resize the canvas: how much
+      // room the pie legend needs, how far the axis labels have to rotate and whether a
+      // chart is dense enough to need a zoom slider are all decisions made from the
+      // width. chart.resize() alone would leave those frozen at whatever the tile
+      // measured when it first drew. Debounced, because a drag fires this constantly.
+      w._ro = new ResizeObserver(() => {
+        if (!w.chart) return;
+        w.chart.resize();
+        clearTimeout(w._relayout);
+        w._relayout = setTimeout(() => relayoutChart(w), 140);
+      });
       w._ro.observe(chartEl);
       // Remember where the user scrolled a dense chart to. Recorded onto the spec so it
       // saves, shares and freezes with everything else; like moving a tile, it isn't
@@ -1033,9 +1060,17 @@ async function renderWidget(w, { nocache = false } = {}) {
       try { await ensureWorldMap(); }
       catch (e) { setMsg(w, "Could not load the world map data.\n" + String(e.message || e), true); return; }
     }
-    w.chart.setOption(buildOption(res, w.chartType, w.spec, w.theme, w.chart.getWidth(), w), true);
+    w.chart.setOption(buildOption(res, w.chartType, w.spec, w.theme, w.chart.getWidth(), w, w.chart.getHeight()), true);
     w.chart.resize();
   } catch (e) { setMsg(w, String(e), true); }
+}
+
+/** Re-apply the chart option at the tile's current size. See the ResizeObserver. */
+function relayoutChart(w) {
+  if (!w || !w.chart || !w.lastRes || w.chartType === "map") return;
+  try {
+    w.chart.setOption(buildOption(w.lastRes, w.chartType, w.spec, w.theme, w.chart.getWidth(), w, w.chart.getHeight()), true);
+  } catch (e) { console.warn("relayout skipped:", e); }
 }
 
 function addWidgetToGrid(w) {
