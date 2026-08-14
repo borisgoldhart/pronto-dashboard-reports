@@ -47,8 +47,25 @@ body {
   background: #fff; border: 1px solid var(--line); border-radius: 4px;
   box-shadow: 0 1px 3px rgba(0,0,0,.06); display: flex; flex-direction: column; overflow: hidden;
 }
-.w-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-.w-title { font-weight: 700; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Two-row header: the title says what the widget is and over what window; the subhead
+   carries the metadata you need to trust the number — measure, interval, what it's
+   narrowed by — plus the key for a second data source, which has no other home. */
+.w-head { display: flex; align-items: flex-start; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+.w-head-text { min-width: 0; flex: 0 1 auto; }
+.w-title { display: block; font-weight: 700; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.w-sub {
+  display: flex; align-items: center; gap: 8px; margin-top: 2px;
+  font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden;
+}
+.w-sub:empty { display: none; }
+.w-sub-meta { overflow: hidden; text-overflow: ellipsis; }
+/* Key for the second data source. The swatch is the line's own colour, so the tile
+   explains the line without the reader having to hunt the legend. */
+.w-key { display: inline-flex; align-items: center; gap: 5px; flex: none; color: #2b7fc0; font-weight: 600; }
+.w-key-line { display: inline-block; width: 14px; height: 0; border-top: 2.5px solid currentColor; border-radius: 2px; }
+.w-key.bad { color: var(--bad); }
+/* The header keeps its icons on the first line even though the row is now two high. */
+.w-head .w-info, .w-head .w-cached, .w-head .icon-btn, .w-head .w-export { margin-top: 1px; }
 .w-head .spacer { margin-left: auto; }
 
 /* Info hover in the widget header */

@@ -447,6 +447,11 @@ function buildOption(norm, chartType, spec, theme, width = 800) {
     smooth: true,
     connectNulls: false,        // a month with no rows is a gap, not a dive to zero
     symbol: "circle", symbolSize: 7,
+    // Hovering the line has to do something visible, or it reads as inert. The point
+    // grows and the line thickens under the cursor, and triggerLineEvent lets the
+    // stroke itself respond — not only the 7px marker, which is a hard target to hit.
+    triggerLineEvent: true,
+    emphasis: { focus: "series", scale: 2, lineStyle: { width: 4.5 } },
     lineStyle: { width: 3, color: OVERLAY_COLOR },
     itemStyle: { color: OVERLAY_COLOR },
     data: ov.points.map((p) => p.value),
@@ -472,6 +477,22 @@ function buildOption(norm, chartType, spec, theme, width = 800) {
       trigger: "axis",
       confine: true,
       axisPointer: { type: "shadow" },
+      // The default axis tooltip lists the second source as just another row, which
+      // buries it under a dozen stacked series and gives no clue it is a different
+      // measure on a different axis. Split it off below a rule, in its own colour.
+      formatter: (ps) => {
+        if (!ps || !ps.length) return "";
+        const rows = ps.filter((p) => p.seriesName !== ovName);
+        const line = ps.find((p) => p.seriesName === ovName);
+        const dot = (c) => `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c};margin-right:6px"></span>`;
+        let html = `<div style="font-weight:700;margin-bottom:3px">${escapeHtml(String(ps[0].axisValueLabel ?? ps[0].name))}</div>`;
+        html += rows.map((p) => `${dot(p.color)}${escapeHtml(p.seriesName)}: <b>${money(p.value)}</b>`).join("<br/>");
+        if (line) {
+          html += `<div style="margin-top:5px;padding-top:5px;border-top:1px solid #e2e7ec;color:${OVERLAY_COLOR}">
+            ${dot(OVERLAY_COLOR)}${escapeHtml(line.seriesName)}: <b>${line.value === null || line.value === undefined ? "no data" : money(line.value)}</b></div>`;
+        }
+        return html;
+      },
     } : {
       trigger: "item",
       confine: true,
@@ -498,7 +519,10 @@ function tileHTML(w) {
   return `
     <div class="grid-stack-item-content">
       <div class="w-head">
-        <span class="w-title">${escapeHtml(w.title)}</span>
+        <div class="w-head-text">
+          <span class="w-title">${escapeHtml(w.title)}</span>
+          <div class="w-sub"></div>
+        </div>
         <span class="w-info" aria-label="Report details">&#9432;<div class="w-info-pop"></div></span>
         <span class="w-cached"></span>
         <span class="spacer"></span>
@@ -654,12 +678,66 @@ function fmtDateShort(d) {
   if (!m) return d || "";
   return `${+m[3]} ${MON[+m[2] - 1]} ${m[1]}`;
 }
+/** "01-01-2026" from "2026-01-01" — the format the reporting API and the legacy
+ *  report both use, so a title can be read straight against them. */
+function fmtDateNum(d) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || "");
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : (d || "");
+}
+
+/** How the widget describes its window: the preset by name when there is one, because
+ *  "YTD" says more than the dates it happens to resolve to today; explicit dates
+ *  otherwise (which is also what a frozen snapshot always shows). */
+function datePhrase(spec) {
+  const p = spec.datePreset;
+  if (p && p !== "Custom Dates") return p;
+  return `${fmtDateNum(spec.dateFrom)} to ${fmtDateNum(spec.dateTo)}`;
+}
+
+/** "Timesheet Data by Brand Name. YTD" — what the widget is, then over what window.
+ *  Everything else (measure, interval, second source, filters) goes in the subhead,
+ *  which keeps the title one readable line however much is configured. */
 function autoTitleFor(spec) {
-  const ov = spec.overlay || {};
-  const src = ov.enabled && ov.dataSource
-    ? `${dsLabel(spec.dataSource)} vs ${dsLabel(ov.dataSource)}`
-    : dsLabel(spec.dataSource);
-  return `${src} · ${fmtDateShort(spec.dateFrom)}–${fmtDateShort(spec.dateTo)}`;
+  const by = spec.groupBy && spec.groupBy !== "none" ? ` by ${fieldLabel(spec.groupBy)}` : "";
+  return `${dsLabel(spec.dataSource)}${by}. ${datePhrase(spec)}`;
+}
+
+/** The measure, as a phrase: "Count" / "Sum of Timesheet Hours". */
+function measurePhrase(spec) {
+  if (!spec.displayAs || spec.displayAs === "count") return "Count";
+  return `${cap(spec.displayAs)} of ${fieldLabel(spec.statsField) || spec.statsField || "—"}`;
+}
+
+/**
+ * Second header row: the metadata that doesn't belong in a title but that you need in
+ * order to trust the numbers — what is being measured, over what interval, narrowed by
+ * what — and, when there is a second data source, a key for it. Without that key the
+ * line has no explanation anywhere on the tile.
+ */
+function updateSubhead(w) {
+  const el = w.el && w.el.querySelector(".w-sub");
+  if (!el) return;
+  const s = w.spec || {};
+  const bits = [];
+  bits.push(measurePhrase(s));
+  const hasSub = s.subGroup && s.subGroup !== "none";
+  if (hasSub) bits.push(`split by ${fieldLabel(s.subGroup)}`);
+  else if (s.interval && s.interval !== "0") bits.push(`by ${ivLabel(s.interval)}`);
+  const offices = (s.officeFilters || []).filter(Boolean);
+  if (offices.length) bits.push(offices.length === 1 ? offices[0] : `${offices.length} offices`);
+  const filters = (s.filters || []).filter((f) => f && f.name);
+  if (filters.length) bits.push(`${filters.length} filter${filters.length === 1 ? "" : "s"}`);
+
+  const ov = s.overlay || {};
+  let key = "";
+  if (ov.enabled && ov.dataSource) {
+    const bad = w.lastOverlay && (w.lastOverlay.error || w.lastOverlay.note);
+    const unit = ov.displayAs === "count" ? "count" : (fieldLabel(ov.statsField) || ov.statsField || ov.displayAs);
+    key = `<span class="w-key${bad ? " bad" : ""}" title="${escapeHtml(bad || "Second data source, drawn as a line on the right-hand axis")}">
+             <span class="w-key-line"></span>${escapeHtml(dsLabel(ov.dataSource))} (${escapeHtml(unit)})${bad ? " ⚠" : ""}
+           </span>`;
+  }
+  el.innerHTML = `<span class="w-sub-meta">${escapeHtml(bits.join(" · "))}</span>${key}`;
 }
 
 // Fill the header ⓘ hover popover with the widget's query + any filters.
@@ -814,7 +892,16 @@ function makeItemEl(w) {
 }
 
 async function renderWidget(w, { nocache = false } = {}) {
+  // An auto-title is derived, not stored: regenerate it on every render so a widget
+  // saved months ago still describes itself the way the current build does, and so a
+  // rolling preset's title keeps up with the window it now covers.
+  if (w.autoTitle) {
+    w.title = autoTitleFor(w.spec);
+    const t = w.el && w.el.querySelector(".w-title");
+    if (t) t.textContent = w.title;
+  }
   updateInfo(w);
+  updateSubhead(w);
   setMsg(w, "Loading… (Pronto reports can take 10–30s the first time)");
   try {
     // A frozen snapshot reads stored bytes and nothing else — same response
@@ -833,6 +920,7 @@ async function renderWidget(w, { nocache = false } = {}) {
     w.lastCompare = res.compare || null;
     w.lastOverlay = res.overlay || null;
     updateInfo(w);
+    updateSubhead(w);      // now that we know whether the second source actually loaded
     if (!res.ok) { setMsg(w, (res.error || "Query failed") + "\n\nRequest: " + (res.url || "(none)"), true); return; }
     setMsg(w, "");
     // A second source that failed must say so in the header. The bars are still
