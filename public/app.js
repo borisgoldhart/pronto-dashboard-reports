@@ -209,7 +209,7 @@ function resolveMapCountry(raw) {
 }
 
 // ---------- ECharts option builder ----------
-function buildOption(norm, chartType, spec, theme, width = 800) {
+function buildOption(norm, chartType, spec, theme, width = 800, widget = null) {
   const series = norm.series;
   const color = themeColors(theme);
   const money = (v) => (v == null ? "" : Number(v).toLocaleString());
@@ -486,20 +486,29 @@ function buildOption(norm, chartType, spec, theme, width = 800) {
       trigger: "axis",
       confine: true,
       axisPointer: { type: "shadow" },
-      // The default axis tooltip lists the second source as just another row, which
-      // buries it under a dozen stacked series and gives no clue it is a different
-      // measure on a different axis. Split it off below a rule, in its own colour.
+      // Which readout you get depends on where the pointer actually is.
+      //
+      // ECharts' own hit-testing can't be used for this: the bars are drawn over the
+      // line's whole plot area and win the mouse even where the line is well clear of
+      // them, so an item-triggered tooltip on the line either reports the bar beneath
+      // it or nothing at all (measured, both). So the pointer's own y is tracked and
+      // compared with where the line actually sits for the hovered category — within a
+      // finger's width of the line, you get the line and nothing else.
       formatter: (ps) => {
         if (!ps || !ps.length) return "";
-        const rows = ps.filter((p) => p.seriesName !== ovName);
+        const label = String(ps[0].axisValueLabel ?? ps[0].name);
         const line = ps.find((p) => p.seriesName === ovName);
         const dot = (c) => `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c};margin-right:6px"></span>`;
-        let html = `<div style="font-weight:700;margin-bottom:3px">${escapeHtml(String(ps[0].axisValueLabel ?? ps[0].name))}</div>`;
-        html += rows.map((p) => `${dot(p.color)}${escapeHtml(p.seriesName)}: <b>${money(p.value)}</b>`).join("<br/>");
-        if (line) {
-          html += `<div style="margin-top:5px;padding-top:5px;border-top:1px solid #e2e7ec;color:${OVERLAY_COLOR}">
-            ${dot(OVERLAY_COLOR)}${escapeHtml(line.seriesName)}: <b>${line.value === null || line.value === undefined ? "no data" : money(line.value)}</b></div>`;
+        const lineRow = (leading) => `<div style="${leading}color:${OVERLAY_COLOR}">${dot(OVERLAY_COLOR)}${escapeHtml(ovName)}: <b>${
+          line && line.value !== null && line.value !== undefined ? money(line.value) : "no data"}</b></div>`;
+
+        if (line && onOverlayLine(widget, ps[0].dataIndex, line.value, horizontal)) {
+          return `<div style="font-weight:700;margin-bottom:3px">${escapeHtml(label)}</div>${lineRow("")}`;
         }
+        let html = `<div style="font-weight:700;margin-bottom:3px">${escapeHtml(label)}</div>`;
+        html += ps.filter((p) => p.seriesName !== ovName)
+          .map((p) => `${dot(p.color)}${escapeHtml(p.seriesName)}: <b>${money(p.value)}</b>`).join("<br/>");
+        if (line) html += lineRow("margin-top:5px;padding-top:5px;border-top:1px solid #e2e7ec;");
         return html;
       },
     } : {
@@ -515,6 +524,54 @@ function buildOption(norm, chartType, spec, theme, width = 800) {
     yAxis: horizontal ? catAxis : [valueAxis, ...ovAxis],
     series: [...s, ...ovSeries],
   };
+}
+
+/** How close to the line counts as "on it", in pixels. Generous enough to hit with a
+ *  trackpad, tight enough that it doesn't steal hovers meant for the bars. */
+const OVERLAY_HOVER_PX = 22;
+
+/** Shortest distance from a point to a line segment. */
+function distToSegment(p, a, b) {
+  const vx = b.x - a.x, vy = b.y - a.y;
+  const len2 = vx * vx + vy * vy;
+  const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2)) : 0;
+  return Math.hypot(p.x - (a.x + t * vx), p.y - (a.y + t * vy));
+}
+
+/**
+ * Is the pointer on the overlay line?
+ *
+ * Measured against the line itself, not just its nodes: the distance to the two
+ * segments either side of the hovered category, so the whole stroke is hoverable and
+ * not only the 7px dots. (The line is drawn smoothed, so the real curve sits a couple
+ * of pixels off these straight segments — well inside the tolerance.)
+ */
+function onOverlayLine(widget, dataIndex, value, horizontal) {
+  const chart = widget && widget.chart;
+  if (!chart || !widget._pointer) return false;
+  try {
+    const series = (chart.getOption().series || []).find((s) =>
+      s.type === "line" && (horizontal ? s.xAxisIndex === 1 : s.yAxisIndex === 1));
+    const data = (series && series.data) || [];
+    if (!data.length) return false;
+    const finder = horizontal ? { xAxisIndex: 1, yAxisIndex: 0 } : { xAxisIndex: 0, yAxisIndex: 1 };
+    const toPx = (i) => {
+      const v = data[i];
+      if (v === null || v === undefined) return null;
+      const p = chart.convertToPixel(finder, horizontal ? [v, i] : [i, v]);
+      return p && isFinite(p[0]) && isFinite(p[1]) ? { x: p[0], y: p[1] } : null;
+    };
+    const P = widget._pointer;
+    let best = Infinity;
+    const node = toPx(dataIndex);
+    if (node) best = Math.hypot(P.x - node.x, P.y - node.y);
+    for (const i of [dataIndex - 1, dataIndex]) {
+      if (i < 0 || i + 1 >= data.length) continue;
+      const a = toPx(i), b = toPx(i + 1);
+      if (a && b) best = Math.min(best, distToSegment(P, a, b));
+    }
+    return best <= OVERLAY_HOVER_PX;
+  } catch { return false; }
 }
 
 /** Legend/axis name for an overlay: "Timesheet Data (hours)". */
@@ -956,6 +1013,11 @@ async function renderWidget(w, { nocache = false } = {}) {
       // saves, shares and freezes with everything else; like moving a tile, it isn't
       // persisted until Save dashboard. Read-only viewers can still pan — it just
       // doesn't follow them home.
+      // The tooltip needs to know where the pointer is, not just which column it's over
+      // — see onOverlayLine(). ZRender reports it in chart-local pixels, which is what
+      // convertToPixel returns too.
+      w._pointer = { x: 0, y: 0 };
+      w.chart.getZr().on("mousemove", (e) => { w._pointer.x = e.offsetX; w._pointer.y = e.offsetY; });
       w.chart.on("datazoom", () => {
         if (!w.spec || PUBLIC_VIEW || SNAPSHOT_ID) return;
         const dz = (w.chart.getOption().dataZoom || [])[0];
@@ -963,6 +1025,7 @@ async function renderWidget(w, { nocache = false } = {}) {
         // A full-width window is the default, not a choice — don't store it.
         if (dz.start <= 0.01 && dz.end >= 99.99) delete w.spec.zoom;
         else w.spec.zoom = { start: dz.start, end: dz.end };
+        markDirty("zoom");
       });
     }
     if (w.chartType === "map") {
@@ -970,7 +1033,7 @@ async function renderWidget(w, { nocache = false } = {}) {
       try { await ensureWorldMap(); }
       catch (e) { setMsg(w, "Could not load the world map data.\n" + String(e.message || e), true); return; }
     }
-    w.chart.setOption(buildOption(res, w.chartType, w.spec, w.theme, w.chart.getWidth()), true);
+    w.chart.setOption(buildOption(res, w.chartType, w.spec, w.theme, w.chart.getWidth(), w), true);
     w.chart.resize();
   } catch (e) { setMsg(w, String(e), true); }
 }
@@ -991,6 +1054,7 @@ function removeWidget(id) {
   if (w.chart) w.chart.dispose();
   grid.removeWidget(w.el);
   widgets.delete(id);
+  markDirty("widget removed");
   updateEmptyState();
 }
 
@@ -1017,6 +1081,7 @@ function duplicateWidget(id) {
     // no x/y -> Gridstack drops it into the first free slot (no overlap)
   };
   const w = addWidgetToGrid(clone);
+  markDirty("widget duplicated");
   renderWidget(w);
 }
 
@@ -1580,10 +1645,12 @@ function applyEditor() {
     w.title = title; w.chartType = chartType; w.theme = theme; w.spec = spec; w.autoTitle = autoTitle;
     w.lastEditedBy = CURRENT_USER ? { ...CURRENT_USER, at: new Date().toISOString() } : null;
     w.el.querySelector(".w-title").textContent = title;
+    markDirty("widget edited");
     renderWidget(w);
   } else {
     const w = addWidgetToGrid({ id: "w" + Date.now().toString(36), title, chartType, theme, spec, autoTitle,
       lastEditedBy: CURRENT_USER ? { ...CURRENT_USER, at: new Date().toISOString() } : null, w: 6, h: 4 });
+    markDirty("widget added");
     renderWidget(w);
   }
   closeEditor();
@@ -1614,25 +1681,67 @@ function closeDashSettings() {
   $("dashModalScrim").classList.remove("open");
 }
 
-async function saveDashboard() {
+/** Save the settings typed into the settings modal, then save the dashboard. */
+async function saveDashSettings() {
   const name = $("d_name").value.trim();
   if (!name) { $("d_nameErr").textContent = "Please give the dashboard a name."; $("d_name").focus(); return; }
-
   dashboardMeta.title = name;
   dashboardMeta.refreshInterval = $("d_refresh").value;
   setCrumb(name);
   closeDashSettings();
+  await saveDashboard();
+}
 
+/**
+ * Save. No dialog: the button does what it says, because the overwhelmingly common
+ * case is "I moved a widget and want to keep it", and asking for the name again every
+ * time made a one-second action into a decision. The name and refresh interval live
+ * behind the settings button instead.
+ */
+async function saveDashboard() {
+  if (!CURRENT_DASH.guid || !CURRENT_DASH.canEdit) return;
   $("status").textContent = "saving…";
   const body = {
-    title: name,
-    refreshInterval: dashboardMeta.refreshInterval,
+    title: dashboardMeta.title,
+    refreshInterval: dashboardMeta.refreshInterval || "0",
     widgets: currentLayout(),
   };
   const res = await api(`/api/dashboard/${CURRENT_DASH.guid}`, { method: "PUT", body: JSON.stringify(body) });
-  $("status").textContent = res.updatedAt ? "saved ✓" : (res.error || "save failed");
-  setTimeout(() => ($("status").textContent = ""), 3000);
+  if (res.updatedAt) {
+    markClean();
+    $("status").textContent = "saved ✓";
+  } else {
+    $("status").textContent = res.error || "save failed";
+  }
+  setTimeout(() => { if (/saved ✓|save failed/.test($("status").textContent)) $("status").textContent = ""; }, 3000);
+  return Boolean(res.updatedAt);
 }
+
+/* ---- unsaved-changes tracking -------------------------------------------------
+   Layout, zoom and widget edits are all in-memory until Save. That is fine until
+   someone closes the tab on twenty minutes of arranging, so the state is tracked
+   explicitly: the Save button shows there is something to save, and the browser
+   asks before the page goes. Only ever armed for someone who could actually save. */
+let DIRTY = false;
+// Gridstack fires "change" while the saved layout is being laid out, so nothing counts
+// as a change until the dashboard has finished loading itself.
+let DASH_READY = false;
+function markDirty(what) {
+  if (!DASH_READY || !CURRENT_DASH.canEdit || PUBLIC_VIEW || SNAPSHOT_ID) return;
+  DIRTY = true;
+  const btn = $("saveBtn");
+  if (btn) { btn.classList.add("primary"); btn.textContent = "Save dashboard •"; btn.title = `Unsaved changes${what ? ` (${what})` : ""}`; }
+}
+function markClean() {
+  DIRTY = false;
+  const btn = $("saveBtn");
+  if (btn) { btn.classList.remove("primary"); btn.textContent = "Save dashboard"; btn.title = "Save this dashboard"; }
+}
+window.addEventListener("beforeunload", (e) => {
+  if (!DIRTY) return;
+  e.preventDefault();
+  e.returnValue = "";      // the browser shows its own wording; this just arms it
+});
 
 /* ---- multi-dashboard: routing, create, list, share, read-only ---- */
 let CURRENT_DASH = { guid: null, canEdit: true, createdBy: null };
@@ -1649,7 +1758,7 @@ function applyEditMode() {
   // Strict view-only for share-link visitors (non-creators): no Add widget,
   // Share, Save — and no Dashboards list. Just the report + per-widget refresh.
   const ro = !CURRENT_DASH.canEdit;
-  ["addBtn", "saveBtn", "shareBtn", "dashListBtn", "tidyBtn"].forEach((id) => {
+  ["addBtn", "saveBtn", "shareBtn", "dashListBtn", "tidyBtn", "settingsBtn"].forEach((id) => {
     const el = $(id); if (el) el.style.display = ro ? "none" : "";
   });
   const badge = $("roBadge");
@@ -2168,6 +2277,8 @@ async function main() {
   const resizeChart = (el) => { const id = el.getAttribute("gs-id"); const w = widgets.get(id); if (w && w.chart) w.chart.resize(); };
   grid.on("resize", (e, el) => resizeChart(el));
   grid.on("resizestop", (e, el) => resizeChart(el));
+  // Moving or resizing a tile is a change to the dashboard, same as editing a widget.
+  grid.on("change", () => markDirty("layout"));
   window.addEventListener("resize", () => widgets.forEach((w) => w.chart && w.chart.resize()));
 
   // Tidy up: pull every widget up into the gap above it. Deliberately a button rather
@@ -2177,6 +2288,7 @@ async function main() {
   $("tidyBtn").onclick = () => {
     try {
       grid.compact();
+      markDirty("tidied");
       $("status").textContent = "tidied — Save dashboard to keep it";
       setTimeout(() => ($("status").textContent = ""), 3000);
       widgets.forEach((w) => w.chart && w.chart.resize());
@@ -2184,7 +2296,8 @@ async function main() {
   };
 
   $("addBtn").onclick = () => openEditor(null);
-  $("saveBtn").onclick = openDashSettings;          // saving now goes via the settings modal
+  $("saveBtn").onclick = saveDashboard;             // does what it says; settings live behind ⚙
+  $("settingsBtn").onclick = openDashSettings;
   $("listNewBtn").onclick = openCreateDash;
   $("dashListBtn").onclick = () => { location.href = "/dashboards"; };
   $("shareBtn").onclick = openShareModal;
@@ -2199,7 +2312,7 @@ async function main() {
   $("createClose").onclick = closeCreateDash;
   $("createScrim").onclick = closeCreateDash;
   $("c_name").addEventListener("keydown", (e) => { if (e.key === "Enter") createDashboard(); });
-  $("dashSaveBtn").onclick = saveDashboard;
+  $("dashSaveBtn").onclick = saveDashSettings;
   $("dashCancelBtn").onclick = closeDashSettings;
   $("dashModalClose").onclick = closeDashSettings;
   $("dashModalScrim").onclick = closeDashSettings;
@@ -2210,6 +2323,9 @@ async function main() {
   $("scrim").onclick = closeEditor;
 
   await (SNAPSHOT_ID ? loadSnapshot() : loadDashboard());
+  // Everything from here on is the user's doing, so it counts as an unsaved change.
+  markClean();
+  DASH_READY = true;
 }
 
 /* ---- login / logout (per-user sessions) ------------------------------------ */

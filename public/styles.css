@@ -36,6 +36,8 @@ body {
 .btn { border: 1px solid var(--line); background: #fff; color: var(--ink); padding: 8px 14px; border-radius: 4px; font-weight: 600; cursor: pointer; font-size: 13px; }
 .btn:hover { border-color: #cfd6dd; }
 .btn.primary { background: var(--pronto-blue); border-color: var(--pronto-blue); color: #fff; }
+/* Square icon button for the toolbar (settings cog) — same height as its neighbours. */
+.btn-icon { padding: 8px 11px; font-size: 15px; line-height: 1; }
 .btn.primary:hover { background: var(--pronto-blue-d); }
 .icon-btn { border: 0; background: transparent; font-size: 16px; cursor: pointer; color: var(--muted); }
 
