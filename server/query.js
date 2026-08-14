@@ -1,5 +1,5 @@
 import { fetchReportWithOffices, normalize, buildUrl, mergeSolrResponses } from "./pronto.js";
-import { officeFieldFor } from "./fields.js";
+import { officeFieldFor, DISPLAY_AS, resolveDataSource } from "./fields.js";
 import * as cache from "./cache.js";
 
 /**
@@ -105,14 +105,28 @@ export function comparisonRange(spec) {
 }
 
 // ---- second data source (overlay) ------------------------------------------------
+/** How many facet values an overlay asks for. See overlaySpecFor(). */
+const OVERLAY_FACET_LIMIT = 600;
+
 /**
  * The spec for the overlay query, or null when there isn't one.
  *
- * An overlay is deliberately a SINGLE ungrouped total per interval: the primary may be
- * split into a dozen stacked series, and splitting the second source the same way would
- * produce an unreadable thicket of lines. Everything that defines the x-axis — dates,
- * interval, offices, filters — is inherited, because two series can only be compared if
- * they were measured over the same windows.
+ * An overlay is a SINGLE total per interval: the primary may be split into a dozen
+ * stacked series, and splitting the second source the same way would produce an
+ * unreadable thicket of lines. Everything that defines the x-axis — dates, interval,
+ * offices, filters — is inherited, because two series can only be compared if they
+ * were measured over the same windows.
+ *
+ * It nonetheless asks for a GROUPED query, which looks wrong and isn't. The reporting
+ * API rejects an interval query with no facet_field outright:
+ *
+ *     Missing 'field' , path=interval_report/facet
+ *
+ * so "no grouping, just totals over time" is not a request it will answer. We therefore
+ * facet on the source's own office dimension and add the buckets up again in
+ * overlayTotals(). The office field is the right choice because every row has one, which
+ * is what makes the sum complete — and overlayTotals() verifies that rather than
+ * assuming it.
  */
 export function overlaySpecFor(spec) {
   const o = spec.overlay || {};
@@ -122,13 +136,13 @@ export function overlaySpecFor(spec) {
     dataSource: o.dataSource,
     displayAs: o.displayAs || "count",
     statsField: o.statsField || undefined,
-    groupBy: "none",          // one line, not one line per group
+    groupBy: officeFieldFor(o.dataSource),   // required by the API; summed back up below
     subGroup: "none",
-    limit: 1,
-    // The office filter has to be re-resolved: officeFilters are applied against the
-    // office field OF THE SOURCE, and timesheet rows hang off the user's office while
-    // jobs hang off the project's office. Dropping spec.officeField makes urlsFor()
-    // pick the right one for the overlay source instead of reusing the primary's.
+    limit: OVERLAY_FACET_LIMIT,
+    // The office FILTER has to be re-resolved too: officeFilters apply to the office
+    // field OF THE SOURCE, and timesheet rows hang off the user's office while jobs
+    // hang off the project's office. Dropping spec.officeField makes urlsFor() pick the
+    // right one for the overlay source instead of reusing the primary's.
     officeField: undefined,
     overlay: undefined,
     compare: undefined,       // an overlay never carries its own comparison period
@@ -136,7 +150,41 @@ export function overlaySpecFor(spec) {
 }
 
 /**
- * Line up the overlay's buckets with the primary's BY LABEL, not by position.
+ * One total per interval, from a grouped response.
+ *
+ * Counts come from the interval bucket's own `count`, which the API reports for the
+ * whole interval and is therefore exact however many groups came back.
+ *
+ * Sums and the other aggregates do NOT appear at interval level — verified against the
+ * live API, where an interval bucket carries only { val, count, facet }. They exist only
+ * inside the facet buckets, so the total has to be re-assembled by adding those up. That
+ * is only correct if we got ALL of them, so completeness is checked rather than hoped
+ * for: the facet counts must add up to the interval's own count. If they don't, some
+ * rows were left out and the total would be quietly short — the caller is told so it can
+ * say as much, instead of drawing a confident line that is too low.
+ */
+export function overlayTotals(data, { displayAs = "count" } = {}) {
+  const field = DISPLAY_AS[displayAs]?.bucketField || "count";
+  const useIntervalCount = field === "count";
+  const byLabel = new Map();
+  let complete = true;
+
+  (data?.facets?.interval_report?.buckets || []).forEach((ib) => {
+    const facets = ib.facet?.buckets || [];
+    if (useIntervalCount) {
+      byLabel.set(String(ib.val), Number(ib.count) || 0);
+      return;
+    }
+    const covered = facets.reduce((a, b) => a + (Number(b.count) || 0), 0);
+    if (typeof ib.count === "number" && covered !== ib.count) complete = false;
+    byLabel.set(String(ib.val), facets.reduce((a, b) => a + (Number(b[field]) || 0), 0));
+  });
+
+  return { byLabel, complete };
+}
+
+/**
+ * Line up the overlay's totals with the primary's buckets BY LABEL, not by position.
  *
  * The API omits a bucket entirely when a source has no rows in that window, so a
  * source that is quiet in March comes back one bucket short — and a positional merge
@@ -144,12 +192,7 @@ export function overlaySpecFor(spec) {
  * null (a gap in the line), never 0, because "no rows" and "zero hours" are different
  * claims and only one of them is true.
  */
-export function alignOverlay(primaryIntervals, overlayShaped) {
-  const byLabel = new Map();
-  (overlayShaped.intervals || []).forEach((iv) => {
-    const total = (iv.groups || []).reduce((a, g) => a + (Number(g.value) || 0), 0);
-    byLabel.set(String(iv.label), total);
-  });
+export function alignOverlay(primaryIntervals, byLabel) {
   return (primaryIntervals || []).map((iv) => {
     const v = byLabel.get(String(iv.label));
     return { label: iv.label, value: v === undefined ? null : v };
@@ -261,16 +304,22 @@ export async function runWidgetQuery(spec, opts = {}) {
     } catch (err) {
       res = { ok: false, error: String(err.message || err) };
     }
-    overlay = res.ok
-      ? {
-          dataSource: ospec.dataSource,
-          displayAs: ospec.displayAs,
-          statsField: ospec.statsField || null,
-          cached: res.cached,
-          url: res.urls[0],
-          points: alignOverlay(shaped.intervals, normalize(res.data, normOpts(ospec))),
-        }
-      : { dataSource: ospec.dataSource, displayAs: ospec.displayAs, error: res.error || "Could not load the second data source." };
+    if (res.ok) {
+      const { byLabel, complete } = overlayTotals(res.data, { displayAs: ospec.displayAs });
+      overlay = {
+        dataSource: ospec.dataSource,
+        displayAs: ospec.displayAs,
+        statsField: ospec.statsField || null,
+        cached: res.cached,
+        url: res.urls[0],
+        points: alignOverlay(shaped.intervals, byLabel),
+        ...(complete ? {} : { partial: true, note:
+          `Some ${(resolveDataSource(ospec.dataSource) || {}).label || ospec.dataSource} rows have no office recorded, `
+          + `so this line is lower than the true total.` }),
+      };
+    } else {
+      overlay = { dataSource: ospec.dataSource, displayAs: ospec.displayAs, error: res.error || "Could not load the second data source." };
+    }
   }
 
   return {
