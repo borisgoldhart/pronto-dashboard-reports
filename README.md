@@ -106,6 +106,27 @@ The token lifecycle lives in `server/session.js`; the cached token is stored in
 Response is Solr JSON: `facets.interval_report.buckets[]` (per interval) →
 `.facet.buckets[]` (per group) with `count` and `stats_field_sum`.
 
+### Second data source (bar / stacked column only)
+
+`spec.overlay = { enabled, dataSource, displayAs, statsField }` runs a **second** query
+and draws it as a line on its own right-hand axis — e.g. project count as columns
+against timesheet hours as a line. It is deliberately constrained:
+
+- It inherits the date range, interval, offices and filters of the primary. Two series
+  are only comparable if they were measured over the same windows, so those controls
+  are not repeated in the UI.
+- It is always **ungrouped** — one total per interval. Splitting the second source by
+  the same group as the bars would put a dozen lines over a dozen stacks.
+- Office filters are re-resolved per source: timesheets attribute to the user's office
+  (`author_office_name`), jobs to the project's office (`client_office_name`).
+- Points are merged onto the primary's buckets **by label, not by position**. The API
+  omits a bucket when a source has no rows in that window, so a positional merge would
+  shift the line by a month. A missing month is `null` (a gap in the line), never `0`.
+- A failure in the second query never fails the widget: the bars still render and the
+  tile header says the second source is unavailable.
+
+See `overlaySpecFor()` / `alignOverlay()` in `server/query.js`.
+
 ## API (backend)
 
 | Route | Purpose |
