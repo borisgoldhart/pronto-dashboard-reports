@@ -183,6 +183,47 @@ export function overlayTotals(data, { displayAs = "count" } = {}) {
   return { byLabel, complete };
 }
 
+// ---- "No grouping (totals only)" ------------------------------------------------
+/**
+ * The API will not answer an ungrouped query. With an interval it refuses outright
+ * (`Missing 'field' , path=interval_report/facet`); without one it returns HTTP 200 and
+ * an empty `facets: {}`. Either way "just the totals over time" — a reasonable thing to
+ * ask a reporting API — has never worked in this app.
+ *
+ * The fix is the same trick the overlay uses: ask for a grouped query on a dimension
+ * every row has, then add the buckets back up.
+ */
+export const isUngrouped = (spec) => !spec.groupBy || spec.groupBy === "none";
+
+export function ungroupedSpecFor(spec) {
+  return { ...spec, groupBy: officeFieldFor(spec.dataSource), subGroup: "none", limit: OVERLAY_FACET_LIMIT };
+}
+
+/** Shape a forced-facet response back into the single "Total" series the user asked for. */
+export function ungroupedShape(data, spec) {
+  const field = DISPLAY_AS[spec.displayAs]?.bucketField || "count";
+  const one = (label, value) => ({ label, groups: [{ name: "Total", value }] });
+
+  const ivs = data?.facets?.interval_report?.buckets;
+  if (Array.isArray(ivs) && ivs.length) {
+    const { byLabel, complete } = overlayTotals(data, { displayAs: spec.displayAs });
+    return {
+      intervals: ivs.map((ib) => one(ib.val, byLabel.get(String(ib.val)) ?? 0)),
+      series: ["Total"], count: ivs.length, partial: !complete,
+    };
+  }
+
+  // No interval: one flat facet, totalled the same way.
+  const flat = data?.facets?.group?.buckets || [];
+  const apiTotal = data?.facets?.count;
+  const total = field === "count"
+    ? (typeof apiTotal === "number" ? apiTotal : flat.reduce((a, b) => a + (Number(b.count) || 0), 0))
+    : flat.reduce((a, b) => a + (Number(b[field]) || 0), 0);
+  const covered = flat.reduce((a, b) => a + (Number(b.count) || 0), 0);
+  const complete = field === "count" || typeof apiTotal !== "number" || covered === apiTotal;
+  return { intervals: flat.length || typeof apiTotal === "number" ? [one("Total", total)] : [], series: ["Total"], count: 1, partial: !complete };
+}
+
 /**
  * Line up the overlay's totals with the primary's buckets BY LABEL, not by position.
  *
@@ -265,20 +306,27 @@ export async function runPeriod(spec, { who = "anon", auth = null, nocache = fal
  * and replay it later without re-running anything.
  */
 export async function runWidgetQuery(spec, opts = {}) {
-  const urls = urlsFor(spec);
-  const primary = await runPeriod(spec, opts);
+  // "No grouping" is asked for as a grouped query and totalled back up — see
+  // ungroupedSpecFor(). Everything downstream (cache key, comparison, chunking) uses
+  // the rewritten spec so there is only ever one query shape in play.
+  const ungrouped = isUngrouped(spec);
+  const qspec = ungrouped ? ungroupedSpecFor(spec) : spec;
+  const shapeOf = (data, sp) => (ungrouped ? ungroupedShape(data, sp) : normalize(data, normOpts(sp)));
+
+  const urls = urlsFor(qspec);
+  const primary = await runPeriod(qspec, opts);
   if (!primary.ok) {
     return { ok: false, error: primary.error, status: primary.status, authRequired: primary.authRequired, url: urls[0], urls, ...primary.meta };
   }
-  const shaped = normalize(primary.data, normOpts(spec));
+  const shaped = shapeOf(primary.data, spec);
 
   let compare = null, deltas = null;
   const range = comparisonRange(spec);
   if (range) {
-    const prevSpec = { ...spec, dateFrom: range.from, dateTo: range.to, compare: undefined };
+    const prevSpec = { ...qspec, dateFrom: range.from, dateTo: range.to, compare: undefined };
     const secondary = await runPeriod(prevSpec, opts);
     if (secondary.ok) {
-      const shapedPrev = normalize(secondary.data, normOpts(prevSpec));
+      const shapedPrev = shapeOf(secondary.data, prevSpec);
       compare = {
         dateFrom: range.from, dateTo: range.to,
         cached: secondary.cached, url: secondary.urls[0],
@@ -331,6 +379,10 @@ export async function runWidgetQuery(spec, opts = {}) {
     ...shaped,
     ...(compare ? { compare, deltas } : {}),
     ...(overlay ? { overlay } : {}),
+    // An ungrouped total is assembled from facet buckets, so it can fall short if some
+    // rows carry no office. Say so rather than showing a confident number that is low.
+    ...(shaped.partial ? { partial: true, note:
+      `Some rows have no office recorded, so this total is lower than the true figure.` } : {}),
     raw: primary.data,          // callers strip this unless ?raw=1 was asked for
   };
 }
