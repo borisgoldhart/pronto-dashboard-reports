@@ -454,8 +454,9 @@ function buildOption(norm, chartType, spec, theme, width = 800) {
   const ovAxis = ov ? [{
     type: "value",
     position: horizontal ? "top" : "right",
-    name: ovName,
-    nameTextStyle: { fontSize: 10, color: OVERLAY_COLOR },
+    // No axis name: it would sit in the same corner as the legend and collide with it
+    // on a chart with many series. The legend already names the line, and the axis is
+    // tinted to match it, which is what ties the two together.
     splitLine: { show: false },                       // one grid only — two sets fight
     axisLine: { show: true, lineStyle: { color: OVERLAY_COLOR } },
     axisLabel: { color: OVERLAY_COLOR, formatter: (v) => (v >= 1000 ? (v / 1000) + "k" : v) },
