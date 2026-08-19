@@ -1966,6 +1966,9 @@ let SNAPSHOT_META = null;
 /* ---- sharing settings (who a dashboard is shared with) ---------------------- */
 
 let SS_GUID = null;
+// Who already has access, so the picker can say so instead of offering someone
+// the server is only going to refuse: id -> "the owner" / "already an editor" / …
+const SS_TAKEN = new Map();
 
 function memberRowHTML(m, removable) {
   const who = escapeHtml(m.name || m.email || ("User " + m.id));
@@ -1986,6 +1989,10 @@ async function loadMembers() {
     : `<span class="member-sub">No owner recorded (created before sharing existed)</span>`;
   const editors = (r.members || []).filter((m) => m.role === "editor");
   const viewers = (r.members || []).filter((m) => m.role !== "editor");
+  SS_TAKEN.clear();
+  if (owner.id != null) SS_TAKEN.set(String(owner.id), "the owner");
+  editors.forEach((m) => SS_TAKEN.set(String(m.id), "already an editor"));
+  viewers.forEach((m) => SS_TAKEN.set(String(m.id), "already a viewer"));
   $("ss_editors").innerHTML = editors.length ? editors.map((m) => memberRowHTML(m, r.canShare)).join("")
     : `<div class="member-sub">Nobody yet.</div>`;
   $("ss_viewers").innerHTML = viewers.length ? viewers.map((m) => memberRowHTML(m, r.canShare)).join("")
@@ -2021,9 +2028,12 @@ function initUserPicker(key, role) {
     shown = users;
     menu.innerHTML = (note ? `<div class="sayt-head">${escapeHtml(note)}</div>` : "")
       + (users.length
-        ? users.map((u, i) => `<div class="sayt-opt" data-i="${i}">
+        ? users.map((u, i) => {
+            const taken = SS_TAKEN.get(String(u.id));
+            return `<div class="sayt-opt${taken ? " is-taken" : ""}" data-i="${i}">
             <span>${escapeHtml(u.name || u.email || ("User " + u.id))}</span>
-            <code>${escapeHtml(u.office || u.email || "")}</code></div>`).join("")
+            <code>${escapeHtml(taken || u.office || u.email || "")}</code></div>`;
+          }).join("")
         : `<div class="sayt-empty">No matching Pronto user.</div>`);
     menu.classList.add("open");
   };
@@ -2042,6 +2052,8 @@ function initUserPicker(key, role) {
   const choose = async (i) => {
     const u = shown[i];
     if (!u) return;
+    if (SS_TAKEN.has(String(u.id))) return;      // already has access; saying so is the point
+
     close();
     input.value = "";
     await addMember(u, role);

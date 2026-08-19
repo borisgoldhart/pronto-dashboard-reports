@@ -411,3 +411,6 @@ body {
 .member-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .member-sub { color: var(--muted); font-size: 12px; font-weight: 400; }
 .member-x { margin-left: auto; padding: 4px 9px; font-size: 12px; flex: none; }
+
+.sayt-opt.is-taken { opacity: .55; cursor: default; }
+.sayt-opt.is-taken:hover, .sayt-opt.is-taken.active { background: transparent; }
