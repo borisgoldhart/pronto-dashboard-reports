@@ -64,7 +64,7 @@
       </div>
       <div class="pp-card-body--flush pp-scroll-x">
         <table class="pp-table" id="dashTable">
-          <thead><tr><th>Dashboard</th><th>Widgets</th><th>Author</th><th>Last updated</th><th></th></tr></thead>
+          <thead><tr><th>Dashboard</th><th>Widgets</th><th>Author</th><th>Access</th><th>Last updated</th><th></th></tr></thead>
           <tbody id="dashRows"></tbody>
         </table>
         <div id="dashEmpty" class="dash-empty" hidden>No dashboards yet — create your first one.</div>
@@ -199,6 +199,51 @@
   <!-- Grid -->
   <div class="grid-stack"></div>
   <div id="emptyState" class="empty">No widgets yet. Click <b>+ Add widget</b> to build your first graph.</div>
+
+  <!-- Sharing settings: who a dashboard is shared with -->
+  <div id="shareSettingsScrim" class="modal-scrim"></div>
+  <div id="shareSettingsModal" class="modal modal-wide" role="dialog" aria-labelledby="shareSettingsTitle">
+    <div class="modal-head"><span id="shareSettingsTitle">Sharing</span>
+      <button id="shareSettingsClose" class="icon-btn">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="share-sub" id="ss_for"></div>
+
+      <fieldset class="filter-box">
+        <legend>Owner</legend>
+        <div id="ss_owner" class="member-row"></div>
+      </fieldset>
+
+      <fieldset class="filter-box">
+        <legend>Editors</legend>
+        <div class="member-hint">Can change widgets, and invite or remove people. They cannot delete the dashboard.</div>
+        <div class="sayt">
+          <input id="ss_editorSearch" type="text" autocomplete="off" placeholder="Search Pronto users to add as an editor&hellip;" />
+          <div id="ss_editorMenu" class="sayt-menu"></div>
+        </div>
+        <div id="ss_editors" class="member-list"></div>
+      </fieldset>
+
+      <fieldset class="filter-box">
+        <legend>Viewers</legend>
+        <div class="member-hint">Read-only, the same as the live share link.
+          <b>Viewers see the data as you see it</b> — the dashboard's own cached figures — which may include
+          numbers their own Pronto account could not query. Only invite people you'd show this to directly.</div>
+        <div class="sayt">
+          <input id="ss_viewerSearch" type="text" autocomplete="off" placeholder="Search Pronto users to add as a viewer&hellip;" />
+          <div id="ss_viewerMenu" class="sayt-menu"></div>
+        </div>
+        <div id="ss_viewers" class="member-list"></div>
+      </fieldset>
+
+      <div class="office-hint">Anyone you add sees this dashboard in their own All Dashboards list.
+        The public link keeps working separately — see Share on the dashboard itself.</div>
+      <span id="ss_err" class="field-err"></span>
+    </div>
+    <div class="modal-foot">
+      <button id="ss_done" class="btn primary">Done</button>
+    </div>
+  </div>
 
   <!-- Widget editor drawer -->
   <div id="drawer" class="drawer">

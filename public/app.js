@@ -1962,6 +1962,126 @@ const IS_LIST_VIEW = location.pathname.replace(/\/+$/, "") === "/dashboards";
 const SNAPSHOT_ID = new URLSearchParams(location.search).get("s") || null;
 let SNAPSHOT_META = null;
 
+
+/* ---- sharing settings (who a dashboard is shared with) ---------------------- */
+
+let SS_GUID = null;
+
+function memberRowHTML(m, removable) {
+  const who = escapeHtml(m.name || m.email || ("User " + m.id));
+  const sub = m.email && m.name ? escapeHtml(m.email) : "";
+  return `<div class="member-row" data-member="${escapeHtml(String(m.id))}">
+      <span class="member-who"><b>${who}</b>${sub ? ` <span class="member-sub">${sub}</span>` : ""}</span>
+      ${removable ? '<button class="btn member-x" data-remove="1" title="Remove">Remove</button>' : ""}
+    </div>`;
+}
+
+async function loadMembers() {
+  const r = await api(`/api/dashboard/${encodeURIComponent(SS_GUID)}/members`);
+  if (!r || !r.ok) { $("ss_err").textContent = (r && r.error) || "Could not load the sharing settings."; return; }
+  $("ss_err").textContent = "";
+  const owner = r.owner || {};
+  $("ss_owner").innerHTML = owner.id
+    ? memberRowHTML(owner, false)
+    : `<span class="member-sub">No owner recorded (created before sharing existed)</span>`;
+  const editors = (r.members || []).filter((m) => m.role === "editor");
+  const viewers = (r.members || []).filter((m) => m.role !== "editor");
+  $("ss_editors").innerHTML = editors.length ? editors.map((m) => memberRowHTML(m, r.canShare)).join("")
+    : `<div class="member-sub">Nobody yet.</div>`;
+  $("ss_viewers").innerHTML = viewers.length ? viewers.map((m) => memberRowHTML(m, r.canShare)).join("")
+    : `<div class="member-sub">Nobody yet.</div>`;
+}
+
+async function removeMember(id) {
+  const r = await api(`/api/dashboard/${encodeURIComponent(SS_GUID)}/members/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!r || !r.ok) { $("ss_err").textContent = (r && r.error) || "Could not remove that person."; return; }
+  await loadMembers();
+}
+
+async function addMember(user, role) {
+  const r = await api(`/api/dashboard/${encodeURIComponent(SS_GUID)}/members`, {
+    method: "POST",
+    body: JSON.stringify({ id: user.id, name: user.name, email: user.email, role }),
+  });
+  if (!r || !r.ok) { $("ss_err").textContent = (r && r.error) || "Could not add that person."; return; }
+  $("ss_err").textContent = "";
+  await loadMembers();
+}
+
+/** Search-as-you-type over Pronto users, one per role box. Debounced, because
+ *  every keystroke would otherwise be a call to Pronto. */
+function initUserPicker(key, role) {
+  const input = $(`ss_${key}Search`), menu = $(`ss_${key}Menu`);
+  if (!input || !menu) return;
+  let timer = null, shown = [], active = -1, seq = 0;
+
+  const close = () => { menu.classList.remove("open"); active = -1; };
+
+  const render = (users, note) => {
+    shown = users;
+    menu.innerHTML = (note ? `<div class="sayt-head">${escapeHtml(note)}</div>` : "")
+      + (users.length
+        ? users.map((u, i) => `<div class="sayt-opt" data-i="${i}">
+            <span>${escapeHtml(u.name || u.email || ("User " + u.id))}</span>
+            <code>${escapeHtml(u.office || u.email || "")}</code></div>`).join("")
+        : `<div class="sayt-empty">No matching Pronto user.</div>`);
+    menu.classList.add("open");
+  };
+
+  const search = async () => {
+    const q = input.value.trim();
+    if (q.length < 2) { render([], "Type at least two letters"); return; }
+    const mine = ++seq;
+    render([], "Searching…");
+    const r = await api(`/api/users/search?q=${encodeURIComponent(q)}`);
+    if (mine !== seq) return;                 // a later keystroke already won
+    if (!r || !r.ok) { render([], (r && r.error) || "User search unavailable"); return; }
+    render(r.users || []);
+  };
+
+  const choose = async (i) => {
+    const u = shown[i];
+    if (!u) return;
+    close();
+    input.value = "";
+    await addMember(u, role);
+  };
+
+  input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(search, 250); });
+  input.addEventListener("focus", () => { if (input.value.trim().length >= 2) search(); });
+  input.addEventListener("blur", () => setTimeout(close, 150));
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { close(); input.blur(); return; }
+    if (!menu.classList.contains("open")) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      active = Math.max(0, Math.min(shown.length - 1, active + (e.key === "ArrowDown" ? 1 : -1)));
+      [...menu.querySelectorAll(".sayt-opt")].forEach((el, i) => el.classList.toggle("active", i === active));
+    } else if (e.key === "Enter") { e.preventDefault(); choose(active >= 0 ? active : 0); }
+  });
+  menu.addEventListener("mousedown", (e) => {
+    const opt = e.target.closest(".sayt-opt");
+    if (opt) { e.preventDefault(); choose(Number(opt.getAttribute("data-i"))); }
+  });
+}
+
+function openSharingModal(guid, title) {
+  SS_GUID = guid;
+  $("ss_for").textContent = title ? `Who can see and edit “${title}”` : "";
+  $("ss_err").textContent = "";
+  ["ss_editorSearch", "ss_viewerSearch"].forEach((id) => { const el = $(id); if (el) el.value = ""; });
+  $("shareSettingsModal").classList.add("open");
+  $("shareSettingsScrim").classList.add("open");
+  loadMembers();
+}
+function closeSharingModal() {
+  $("shareSettingsModal").classList.remove("open");
+  $("shareSettingsScrim").classList.remove("open");
+  SS_GUID = null;
+  // The list shows the access column, so re-read it in case roles changed.
+  if (IS_LIST_VIEW) renderListView();
+}
+
 async function renderListView() {
   // Keep the white utility bar as its own strip above the table well —
   // board-only actions hidden, the tab marked active.
@@ -1974,22 +2094,27 @@ async function renderListView() {
   setCrumb("All dashboards");
 
   const tbody = $("dashRows");
-  tbody.innerHTML = `<tr><td colspan="5" class="pp-cell-muted">Loading…</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="6" class="pp-cell-muted">Loading…</td></tr>`;
   const r = await api("/api/dashboards");
   const rows = (r && r.dashboards) || [];
   $("dashEmpty").hidden = rows.length > 0;
   tbody.innerHTML = rows.map((d) => {
     const author = d.createdBy && (d.createdBy.name || d.createdBy.email || ("user " + d.createdBy.id)) || "—";
-    return `<tr data-guid="${escapeHtml(d.guid)}" data-title="${escapeHtml(d.title)}">
+    const role = d.role || "owner";
+    // Only the owner may delete; an editor can change everything else about it.
+    const mayEdit = role === "owner" || role === "editor";
+    return `<tr data-guid="${escapeHtml(d.guid)}" data-title="${escapeHtml(d.title)}" data-role="${escapeHtml(role)}">
       <td class="pp-cell-strong"><span class="dash-name" data-open="1">${escapeHtml(d.title)}</span></td>
       <td>${d.widgetCount || 0}</td>
       <td>${escapeHtml(author)}</td>
+      <td><span class="role-pill role-${escapeHtml(role)}">${escapeHtml(cap(role))}</span></td>
       <td class="pp-cell-muted">${escapeHtml(fmtWhen(d.updatedAt))}</td>
-      <td style="text-align:right">
+      <td style="text-align:right" class="dash-acts">
         <button class="btn primary" data-open="1">View Dashboard</button>
-        <button class="btn" data-ren="1" title="Rename dashboard">Rename</button>
-        <button class="btn" data-dup="1" title="Duplicate dashboard">Duplicate</button>
-        <button class="btn" data-del="1" title="Delete dashboard">Delete</button>
+        ${mayEdit ? '<button class="btn" data-share="1" title="Who this dashboard is shared with">Settings</button>' : ""}
+        ${mayEdit ? '<button class="btn" data-ren="1" title="Rename dashboard">Rename</button>' : ""}
+        <button class="btn" data-dup="1" title="Take your own copy of this dashboard">Duplicate</button>
+        ${role === "owner" ? '<button class="btn" data-del="1" title="Delete dashboard">Delete</button>' : ""}
       </td>
     </tr>`;
   }).join("");
@@ -1997,6 +2122,7 @@ async function renderListView() {
     const row = e.target.closest("tr[data-guid]"); if (!row) return;
     const guid = row.getAttribute("data-guid");
     if (e.target.closest("[data-open]")) { location.href = "/?d=" + guid; return; }
+    if (e.target.closest("[data-share]")) { openSharingModal(guid, row.getAttribute("data-title") || ""); return; }
     if (e.target.closest("[data-ren]")) { openRenameModal(guid, row.getAttribute("data-title") || ""); return; }
     if (e.target.closest("[data-dup]")) { openDuplicateModal(guid, row.getAttribute("data-title") || ""); return; }
     if (e.target.closest("[data-del]")) {
@@ -2291,6 +2417,18 @@ async function main() {
     $("renClose").onclick = closeRenameModal;
     $("renScrim").onclick = closeRenameModal;
     $("ren_name").addEventListener("keydown", (e) => { if (e.key === "Enter") submitRename(); });
+    // Sharing settings
+    $("ss_done").onclick = closeSharingModal;
+    $("shareSettingsClose").onclick = closeSharingModal;
+    $("shareSettingsScrim").onclick = closeSharingModal;
+    initUserPicker("editor", "editor");
+    initUserPicker("viewer", "viewer");
+    ["ss_editors", "ss_viewers"].forEach((id) => {
+      $(id).addEventListener("click", (e) => {
+        const row = e.target.closest("[data-member]");
+        if (row && e.target.closest("[data-remove]")) removeMember(row.getAttribute("data-member"));
+      });
+    });
     await renderListView();
     return;
   }

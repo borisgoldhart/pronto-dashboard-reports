@@ -389,3 +389,25 @@ body {
    ordinary dashboard. */
 .snap-banner[hidden] { display: none; }
 .snap-banner .snap-dot { font-size: 13px; line-height: 1; }
+
+/* ---- sharing: access column + member lists ---- */
+.role-pill {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; letter-spacing: .02em;
+  background: #eef1f4; color: var(--muted); border: 1px solid var(--line);
+}
+.role-owner  { background: #eaf4ec; color: #1a6b3c; border-color: #cfe6d6; }
+.role-editor { background: #eef6fd; color: #185685; border-color: #cfe4f7; }
+.role-viewer { background: #f4f5f7; color: #5b6570; border-color: #e2e7ec; }
+.dash-acts .btn { margin-left: 4px; }
+
+.member-hint { font-size: 11.5px; color: var(--muted); line-height: 1.45; margin: 0 0 9px; }
+.member-list { margin: 8px 0 4px; }
+.member-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px;
+}
+.member-row:last-child { border-bottom: 0; }
+.member-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-sub { color: var(--muted); font-size: 12px; font-weight: 400; }
+.member-x { margin-left: auto; padding: 4px 9px; font-size: 12px; flex: none; }
