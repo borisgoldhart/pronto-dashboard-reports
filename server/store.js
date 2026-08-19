@@ -20,12 +20,27 @@ import { kvEnabled, jget, jset, del, hgetJSON, hsetJSON, hdel, hgetallJSON, lpus
  *
  * Dashboard doc shape:
  * { guid, title, refreshInterval, lastRefreshedAt, widgets[],
- *   createdBy: {id,name,email}|null, createdAt, updatedAt, updatedBy }
+ *   createdBy: {id,name,email}|null, createdAt, updatedAt, updatedBy,
+ *   members: [{ id, name, email, role:"editor"|"viewer", addedAt, addedBy }] }
  *
- * Sharing model (MVP): GUIDs are unguessable capability URLs. The list
- * endpoint only shows YOUR dashboards; anyone with the link can view; only the
- * creator can save/delete. Report data for a dashboard is cached under the
- * d:<guid> partition (snapshot semantics — see report.js).
+ * Sharing model. Two mechanisms, deliberately kept side by side:
+ *
+ *  1. Named members — invite Pronto users as editors or viewers. A shared
+ *     dashboard appears in their list, and the server decides what they may do
+ *     from their role, never from anything the client sends.
+ *  2. The GUID as an unguessable capability URL, unchanged, so links already
+ *     sent out keep working and people without a Pronto login can still view.
+ *
+ * Members live ON THE DOCUMENT rather than in a join table, and the listing
+ * index carries a memberIds array so "dashboards I can see" is one pass over an
+ * index we already read. That is a deliberate choice for this scale: one source
+ * of truth, nothing to fall out of step, and no migration (a doc with no
+ * members is simply unshared). The textbook alternative — a per-user reverse
+ * index, `user:<id>:dash` — is the right shape at thousands of dashboards and
+ * can be added inside this module without touching a single route.
+ *
+ * Report data for a dashboard is cached under the d:<guid> partition (snapshot
+ * semantics — see report.js), so every member reads the same numbers.
  */
 
 const DIR = path.resolve(config.cacheDir, "..", "data", "dashboards");
@@ -49,6 +64,8 @@ function indexEntry(doc) {
     updatedAt: doc.updatedAt || doc.createdAt || null,
     createdBy: doc.createdBy || null,
     widgetCount: Array.isArray(doc.widgets) ? doc.widgets.length : 0,
+    // Denormalised onto the index so listing never has to open every document.
+    memberIds: (doc.members || []).map((m) => String(m.id)).filter(Boolean),
   };
 }
 
@@ -152,11 +169,36 @@ if (!kvEnabled) {
 
 /* ---- public API (async) ---- */
 
+/**
+ * Dashboards this user can see: the ones they own, plus the ones they have been
+ * invited to. Each row carries the role, so the list can show it and the client
+ * never has to work it out.
+ */
 export async function listDashboards({ ownerId = null, all = false } = {}) {
   const rows = kvEnabled ? await hgetallJSON(INDEX_KEY) : [...index.values()];
-  const mine = all ? rows : rows.filter((r) =>
-    r.createdBy?.id != null && ownerId != null && String(r.createdBy.id) === String(ownerId));
-  return mine.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+  const me = ownerId == null ? null : String(ownerId);
+  const roleOf = (r) => {
+    if (r.createdBy?.id == null) return "owner";        // legacy ownerless doc
+    if (me != null && String(r.createdBy.id) === me) return "owner";
+    if (me != null && (r.memberIds || []).includes(me)) return "member";
+    return null;
+  };
+  const visible = all
+    ? rows.map((r) => ({ ...r, role: "owner" }))
+    : rows.map((r) => ({ r, role: roleOf(r) })).filter((x) => x.role).map((x) => ({ ...x.r, role: x.role }));
+  return visible.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+}
+
+/** The index only knows "member"; the exact role lives on the document. */
+export async function listDashboardsWithRoles({ ownerId = null, all = false } = {}) {
+  const rows = await listDashboards({ ownerId, all });
+  const me = ownerId == null ? null : String(ownerId);
+  return Promise.all(rows.map(async (r) => {
+    if (r.role !== "member") return r;
+    const doc = await getDashboard(r.guid);
+    const m = (doc?.members || []).find((x) => String(x.id) === me);
+    return { ...r, role: m?.role === "editor" ? "editor" : "viewer" };
+  }));
 }
 
 export async function getDashboard(guid) {
@@ -184,6 +226,7 @@ export async function createDashboard({ title, refreshInterval, identity } = {})
     lastRefreshedAt: null,
     widgets: [],
     createdBy: identity ? { id: identity.id != null ? String(identity.id) : null, name: identity.name || null, email: identity.email || null } : null,
+    members: [],
     createdAt: now, updatedAt: now,
   };
   await writeDoc(doc);
@@ -200,6 +243,9 @@ export async function saveDashboard(guid, patch, updatedBy) {
     refreshInterval: typeof patch.refreshInterval === "string" ? patch.refreshInterval : prev.refreshInterval,
     lastRefreshedAt: patch.lastRefreshedAt !== undefined ? patch.lastRefreshedAt : prev.lastRefreshedAt,
     widgets: Array.isArray(patch.widgets) ? patch.widgets : prev.widgets,
+    // members are NOT patchable here: sharing changes go through their own
+    // endpoints so a widget save can never quietly rewrite who has access.
+    members: prev.members || [],
     updatedAt: new Date().toISOString(),
     updatedBy: updatedBy ? { id: updatedBy.id != null ? String(updatedBy.id) : null, name: updatedBy.name || null } : prev.updatedBy || null,
   };
@@ -228,12 +274,60 @@ export async function deleteDashboard(guid) {
   } catch { return false; }
 }
 
-/** Creator-only edit rule. Env mode (single-user dev box) can edit everything;
- *  ownerless dashboards (pre-migration legacy) are editable by anyone signed in. */
-export function canEdit(doc, pronto) {
-  if (!doc) return false;
-  if (pronto?.mode === "env") return true;
+/* ---- roles -------------------------------------------------------------------
+   One function decides what someone is, and everything else is derived from it,
+   so there is a single place to read when asking "why could they do that?". */
+
+/** "owner" | "editor" | "viewer" | null (no access beyond the capability link). */
+export function roleFor(doc, pronto) {
+  if (!doc) return null;
+  if (pronto?.mode === "env") return "owner";          // single-user dev box
+  const me = pronto?.identity?.id;
+  if (me == null) return null;                          // anonymous link visitor
   const owner = doc.createdBy?.id;
-  if (owner == null) return true;
-  return pronto?.identity?.id != null && String(pronto.identity.id) === String(owner);
+  if (owner == null) return "owner";                    // legacy ownerless doc
+  if (String(owner) === String(me)) return "owner";
+  const m = (doc.members || []).find((x) => String(x.id) === String(me));
+  if (!m) return null;
+  return m.role === "editor" ? "editor" : "viewer";
+}
+
+export function canEdit(doc, pronto) {
+  const r = roleFor(doc, pronto);
+  return r === "owner" || r === "editor";
+}
+/** Editors may invite and remove people too — the owner is not a bottleneck. */
+export const canShare = (doc, pronto) => canEdit(doc, pronto);
+/** Deleting the whole dashboard, and removing the owner, stay with the owner. */
+export const canDelete = (doc, pronto) => roleFor(doc, pronto) === "owner";
+
+const ROLES = new Set(["editor", "viewer"]);
+
+/** Add or promote a member. One role per person: inviting an existing viewer as
+ *  an editor promotes them rather than leaving two conflicting rows. */
+export async function setMember(guid, { id, name, email, role }, actor) {
+  const doc = await getDashboard(guid);
+  if (!doc) return { ok: false, error: "Dashboard not found" };
+  if (id == null || String(id).trim() === "") return { ok: false, error: "A user id is required" };
+  if (!ROLES.has(role)) return { ok: false, error: `Unknown role: ${role}` };
+  if (doc.createdBy?.id != null && String(doc.createdBy.id) === String(id)) {
+    return { ok: false, error: "That person owns this dashboard already" };
+  }
+  const members = (doc.members || []).filter((m) => String(m.id) !== String(id));
+  members.push({
+    id: String(id), name: name || null, email: email || null, role,
+    addedAt: new Date().toISOString(),
+    addedBy: actor ? { id: actor.id != null ? String(actor.id) : null, name: actor.name || null } : null,
+  });
+  const next = { ...doc, members, updatedAt: doc.updatedAt };   // sharing isn't a content edit
+  await writeDoc(next);
+  return { ok: true, members };
+}
+
+export async function removeMember(guid, id) {
+  const doc = await getDashboard(guid);
+  if (!doc) return { ok: false, error: "Dashboard not found" };
+  const members = (doc.members || []).filter((m) => String(m.id) !== String(id));
+  await writeDoc({ ...doc, members, updatedAt: doc.updatedAt });
+  return { ok: true, members };
 }
