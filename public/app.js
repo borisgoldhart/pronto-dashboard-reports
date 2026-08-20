@@ -20,7 +20,15 @@ let officesLoading = false;
 let officesPromise = null;       // shared in-flight load (prevents re-entrant reload loops)
 let selectedOffices = [];        // offices chosen in the open editor
 let dupOffices = [];             // offices chosen in the Duplicate-dashboard modal
+// Brand scope chosen in the same modal. Each entry is {id, name}: the name is what the
+// person picked, the id is what the query filters on — the *_name fields match on words,
+// so filtering by name would silently sweep in "Sun Life" when you asked for "Havas Life".
+let dupBrandcats = [];
+let dupBrands = [];
 let dupSourceGuid = null;        // dashboard being duplicated
+// Kept in step with MAX_COMBOS in server/pronto.js, so the dialog can say no before the
+// duplicate is made rather than every widget failing afterwards.
+const MAX_SCOPE_COMBOS = 24;
 let renGuid = null;              // dashboard being renamed (All-dashboards list)
 
 // Upgrade old Phase-2 short keys to the real captured values, so the editor
@@ -807,6 +815,15 @@ function updateSubhead(w) {
   else if (s.interval && s.interval !== "0") bits.push(`by ${ivLabel(s.interval)}`);
   const offices = (s.officeFilters || []).filter(Boolean);
   if (offices.length) bits.push(offices.length === 1 ? offices[0] : `${offices.length} offices`);
+  const scopePhrase = (list, one, many) => {
+    const l = (list || []).filter(Boolean);
+    if (!l.length) return null;
+    return l.length === 1 ? (l[0].name || String(l[0].id)) : `${l.length} ${many}`;
+  };
+  const cats = scopePhrase(s.brandcatFilters, "brand category", "brand categories");
+  if (cats) bits.push(cats);
+  const brands = scopePhrase(s.brandFilters, "brand", "brands");
+  if (brands) bits.push(brands);
   const filters = (s.filters || []).filter((f) => f && f.name);
   if (filters.length) bits.push(`${filters.length} filter${filters.length === 1 ? "" : "s"}`);
 
@@ -849,12 +866,19 @@ function updateInfo(w) {
   ];
   let html = rows.map(([k, v]) => `<div class="ip-row"><span>${k}</span><b>${escapeHtml(v || "—")}</b></div>`).join("");
   html += `<div class="ip-sep"></div>`;
-  const anyFilter = filters.length || offices.length;
+  const cats = (s.brandcatFilters || []).filter(Boolean);
+  const brands = (s.brandFilters || []).filter(Boolean);
+  const anyFilter = filters.length || offices.length || cats.length || brands.length;
   info.classList.toggle("has-filter", Boolean(anyFilter));
   if (offices.length) {
     html += `<div class="ip-flabel">Offices (${offices.length})</div>`;
     html += `<div class="ip-offices">${offices.map((o) => escapeHtml(o)).join(", ")}</div>`;
   }
+  // Named, not numbered: an id in a tooltip tells nobody anything.
+  const scopeBlock = (label, list) => `<div class="ip-flabel">${label} (${list.length})</div>`
+    + `<div class="ip-offices">${list.map((b) => escapeHtml(b.name || String(b.id))).join(", ")}</div>`;
+  if (cats.length) html += scopeBlock("Brand categories", cats);
+  if (brands.length) html += scopeBlock("Brands", brands);
   if (filters.length) {
     html += `<div class="ip-flabel">Filters (${filters.length})</div>`;
     html += filters.map((f) => `<div class="ip-row"><span>${escapeHtml(fieldLabel(f.name))}</span><b>${escapeHtml(f.value)}</b></div>`).join("");
@@ -1677,6 +1701,11 @@ function applyEditor() {
     // The form doesn't own the zoom window, so carry it across an edit rather than
     // silently resetting the view every time someone tweaks a filter.
     if (w.spec && w.spec.zoom) spec.zoom = w.spec.zoom;
+    // Nor does it own the brand scope applied when the dashboard was duplicated. That is
+    // set for the whole board, not per widget, so an edit here must not quietly drop it —
+    // the widget would keep its title and silently start reporting on every brand.
+    if (w.spec && w.spec.brandcatFilters) spec.brandcatFilters = w.spec.brandcatFilters;
+    if (w.spec && w.spec.brandFilters) spec.brandFilters = w.spec.brandFilters;
     w.title = title; w.chartType = chartType; w.theme = theme; w.spec = spec; w.autoTitle = autoTitle;
     w.lastEditedBy = CURRENT_USER ? { ...CURRENT_USER, at: new Date().toISOString() } : null;
     w.el.querySelector(".w-title").textContent = title;
@@ -1861,6 +1890,14 @@ function openDuplicateModal(guid, title) {
   $("dup_applyOffice").checked = false;
   $("dup_officeBox").hidden = true;
   $("dup_officeSearch").value = "";
+  dupBrandcats = []; dupBrands = [];
+  DIM_KEYS.forEach((k) => {
+    $(`dup_apply${k.cap}`).checked = false;
+    $(`dup_${k.key}Box`).hidden = true;
+    $(`dup_${k.key}Search`).value = "";
+    $(`dup_${k.key}Err`).textContent = "";
+    renderDupDimChips(k.key);
+  });
   renderDupOfficeChips();
   $("dupModal").classList.add("open"); $("dupScrim").classList.add("open");
   setTimeout(() => $("dup_name").focus(), 30);
@@ -1893,11 +1930,116 @@ async function dupOfficeSearch() {
     : `<div class="office-loading">${list.length ? "No matches" : "No offices available"}</div>`;
   menu.classList.add("open");
 }
+/* -- Brand Category / Brand pickers in the Duplicate modal ------------------
+   Same shape as the office picker, but the list is searched on the SERVER: there are
+   ~2,200 brand categories and ~3,900 brands, too many to ship to the browser the way the
+   ~200 offices are. Each pick carries its id, which is what the filter actually uses. */
+const DIM_KEYS = [
+  { key: "brandcat", cap: "Brandcat", label: "brand category", state: () => dupBrandcats, set: (v) => { dupBrandcats = v; } },
+  { key: "brand", cap: "Brand", label: "brand", state: () => dupBrands, set: (v) => { dupBrands = v; } },
+];
+const dimByKey = (key) => DIM_KEYS.find((d) => d.key === key);
+
+function renderDupDimChips(key) {
+  const box = $(`dup_${key}Chips`);
+  if (!box) return;
+  box.innerHTML = dimByKey(key).state()
+    .map((it) => `<span class="chip">${escapeHtml(it.name)}<b data-rm="${escapeHtml(String(it.id))}" title="Remove">×</b></span>`)
+    .join("");
+}
+
+const dimTimers = {};
+const dimSeq = {};
+async function dupDimSearch(key) {
+  const menu = $(`dup_${key}Menu`), input = $(`dup_${key}Search`);
+  if (!menu || !input) return;
+  const dim = dimByKey(key);
+  const q = input.value.trim();
+  const mine = (dimSeq[key] = (dimSeq[key] || 0) + 1);
+  menu.innerHTML = `<div class="office-loading">Searching…</div>`;
+  menu.classList.add("open");
+  const r = await api(`/api/report/dimension/${key}?q=${encodeURIComponent(q)}`);
+  if (mine !== dimSeq[key]) return;                        // a later keystroke already won
+  if (!$("dupModal").classList.contains("open")) return;
+  if (!r || !r.ok) {
+    menu.innerHTML = `<div class="office-loading">${escapeHtml((r && r.error) || "Could not load the list")}</div>`;
+    return;
+  }
+  const chosen = new Set(dim.state().map((x) => String(x.id)));
+  const items = (r.items || []).filter((it) => !chosen.has(String(it.id)));
+  menu.innerHTML = items.length
+    ? items.map((it) => `<div class="office-opt" data-id="${escapeHtml(String(it.id))}" data-name="${escapeHtml(it.name)}">
+        <span>${escapeHtml(it.name)}</span></div>`).join("")
+    : `<div class="office-loading">No matching ${dim.label}</div>`;
+  menu.classList.add("open");
+}
+
+function initDupDimPicker(key) {
+  const dim = dimByKey(key);
+  const input = $(`dup_${key}Search`), menu = $(`dup_${key}Menu`), chips = $(`dup_${key}Chips`);
+  const check = $(`dup_apply${dim.cap}`);
+  if (!input || !menu || !chips || !check) return;         // stale cached HTML
+
+  check.addEventListener("change", (e) => {
+    $(`dup_${key}Box`).hidden = !e.target.checked;
+    $(`dup_${key}Err`).textContent = "";
+    updateDupScopeHint();
+    if (e.target.checked) setTimeout(() => input.focus(), 30);
+  });
+  const debounced = () => { clearTimeout(dimTimers[key]); dimTimers[key] = setTimeout(() => dupDimSearch(key), 220); };
+  input.addEventListener("input", debounced);
+  input.addEventListener("focus", () => dupDimSearch(key));
+  input.addEventListener("blur", () => setTimeout(() => menu.classList.remove("open"), 150));
+  menu.addEventListener("mousedown", (e) => {
+    const opt = e.target.closest(".office-opt");
+    if (!opt || !opt.getAttribute("data-id")) return;
+    e.preventDefault();
+    const id = opt.getAttribute("data-id"), name = opt.getAttribute("data-name");
+    if (!dim.state().some((x) => String(x.id) === String(id))) dim.set([...dim.state(), { id, name }]);
+    input.value = "";
+    renderDupDimChips(key);
+    updateDupScopeHint();
+    dupDimSearch(key);
+  });
+  chips.addEventListener("click", (e) => {
+    const rm = e.target.getAttribute("data-rm");
+    if (!rm) return;
+    dim.set(dim.state().filter((x) => String(x.id) !== String(rm)));
+    renderDupDimChips(key);
+    updateDupScopeHint();
+  });
+}
+
+/** How many queries per widget the current selection implies, said plainly. */
+function dupComboCount() {
+  const n = (on, list) => (on && list.length ? list.length : 1);
+  return n($("dup_applyOffice").checked, dupOffices)
+    * n($("dup_applyBrandcat").checked, dupBrandcats)
+    * n($("dup_applyBrand").checked, dupBrands);
+}
+function updateDupScopeHint() {
+  const hint = $("dup_scopeHint");
+  if (!hint) return;
+  const combos = dupComboCount();
+  const over = combos > MAX_SCOPE_COMBOS;
+  hint.classList.toggle("hint-warn", over);
+  hint.innerHTML = combos <= 1
+    ? `Any combination of the three can be used together — the copy is then limited to that
+       office <b>and</b> that brand. Each extra value is a separate query to the reporting
+       API, which is why the total is capped.`
+    : over
+      ? `That is <b>${combos} queries per widget</b>, over the limit of ${MAX_SCOPE_COMBOS}.
+         The reporting API can't combine these into one call, so fewer values please.`
+      : `That's ${combos} quer${combos === 1 ? "y" : "ies"} per widget — the API can't OR these
+         into one call, so each combination is fetched separately (limit ${MAX_SCOPE_COMBOS}).`;
+}
+
 function initDupOfficePicker() {
   if (!$("dup_officeSearch") || !$("dup_officeMenu") || !$("dup_officeChips")) return; // stale cached HTML
   $("dup_applyOffice").addEventListener("change", (e) => {
     $("dup_officeBox").hidden = !e.target.checked;
     $("dup_officeErr").textContent = "";
+    updateDupScopeHint();
     if (e.target.checked) { loadOffices(); setTimeout(() => $("dup_officeSearch").focus(), 30); }
   });
   $("dup_officeSearch").addEventListener("input", dupOfficeSearch);
@@ -1911,11 +2053,12 @@ function initDupOfficePicker() {
     if (o && !dupOffices.includes(o)) dupOffices.push(o);
     $("dup_officeSearch").value = "";
     renderDupOfficeChips();
+    updateDupScopeHint();
     dupOfficeSearch();
   });
   $("dup_officeChips").addEventListener("click", (e) => {
     const rm = e.target.getAttribute("data-rm");
-    if (rm) { dupOffices = dupOffices.filter((x) => x !== rm); renderDupOfficeChips(); }
+    if (rm) { dupOffices = dupOffices.filter((x) => x !== rm); renderDupOfficeChips(); updateDupScopeHint(); }
   });
 }
 
@@ -1927,6 +2070,22 @@ async function submitDuplicate() {
     $("dup_officeErr").textContent = "Choose at least one office, or untick the option.";
     return;
   }
+  const applyBrandcat = $("dup_applyBrandcat").checked;
+  const applyBrand = $("dup_applyBrand").checked;
+  if (applyBrandcat && dupBrandcats.length === 0) {
+    $("dup_brandcatErr").textContent = "Choose at least one brand category, or untick the option.";
+    return;
+  }
+  if (applyBrand && dupBrands.length === 0) {
+    $("dup_brandErr").textContent = "Choose at least one brand, or untick the option.";
+    return;
+  }
+  // Refuse here rather than letting every widget fail its query afterwards.
+  if (dupComboCount() > MAX_SCOPE_COMBOS) {
+    $("dup_nameErr").textContent =
+      `That scope is ${dupComboCount()} queries per widget, over the limit of ${MAX_SCOPE_COMBOS}. Choose fewer values.`;
+    return;
+  }
   const btn = $("dup_create");
   btn.disabled = true; const label = btn.textContent; btn.textContent = "Duplicating…";
   try {
@@ -1935,9 +2094,14 @@ async function submitDuplicate() {
     if (!src || !src.guid) { $("dup_nameErr").textContent = "Could not read the source dashboard."; return; }
     // 2. deep-clone the widgets; optionally replace every office filter
     const widgets = JSON.parse(JSON.stringify(src.widgets || []));
-    if (applyOffice) {
-      widgets.forEach((w) => { w.spec = w.spec || {}; w.spec.officeFilters = [...dupOffices]; });
-    }
+    // Each option REPLACES that dimension on every widget and leaves the others alone,
+    // so ticking two applies both rather than one quietly undoing the other.
+    widgets.forEach((w) => {
+      w.spec = w.spec || {};
+      if (applyOffice) w.spec.officeFilters = [...dupOffices];
+      if (applyBrandcat) w.spec.brandcatFilters = dupBrandcats.map((b) => ({ id: String(b.id), name: b.name }));
+      if (applyBrand) w.spec.brandFilters = dupBrands.map((b) => ({ id: String(b.id), name: b.name }));
+    });
     // 3. create the new dashboard, then save the cloned widgets into it
     const created = await api("/api/dashboards", { method: "POST", body: JSON.stringify({ title }) });
     if (!created || !created.guid) { $("dup_nameErr").textContent = (created && created.error) || "Could not create the copy."; return; }
@@ -2423,6 +2587,7 @@ async function main() {
     $("dupScrim").onclick = closeDuplicateModal;
     $("dup_name").addEventListener("keydown", (e) => { if (e.key === "Enter") submitDuplicate(); });
     initDupOfficePicker();
+    DIM_KEYS.forEach((d) => initDupDimPicker(d.key));
     // Rename-dashboard modal
     $("ren_save").onclick = submitRename;
     $("ren_cancel").onclick = closeRenameModal;

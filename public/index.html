@@ -115,6 +115,34 @@
         <div id="dup_officeChips" class="chips"></div>
         <span id="dup_officeErr" class="field-err"></span>
       </fieldset>
+
+      <label class="dup-check"><input id="dup_applyBrandcat" type="checkbox" />
+        Apply a Brand Category (Master Client) filter to all widgets</label>
+      <fieldset id="dup_brandcatBox" class="filter-box" hidden>
+        <legend>Brand Categories</legend>
+        <div class="office-picker">
+          <input id="dup_brandcatSearch" type="text" autocomplete="off" placeholder="Search brand categories to add&hellip;" />
+          <div id="dup_brandcatMenu" class="office-menu"></div>
+        </div>
+        <div id="dup_brandcatChips" class="chips"></div>
+        <span id="dup_brandcatErr" class="field-err"></span>
+      </fieldset>
+
+      <label class="dup-check"><input id="dup_applyBrand" type="checkbox" />
+        Apply a Brands filter to all widgets</label>
+      <fieldset id="dup_brandBox" class="filter-box" hidden>
+        <legend>Brands</legend>
+        <div class="office-picker">
+          <input id="dup_brandSearch" type="text" autocomplete="off" placeholder="Search brands to add&hellip;" />
+          <div id="dup_brandMenu" class="office-menu"></div>
+        </div>
+        <div id="dup_brandChips" class="chips"></div>
+        <span id="dup_brandErr" class="field-err"></span>
+      </fieldset>
+
+      <span class="field-hint" id="dup_scopeHint">Any combination of the three can be used together —
+        the copy is then limited to that office <b>and</b> that brand. Each extra value is a
+        separate query to the reporting API, which is why the total is capped.</span>
     </div>
     <div class="modal-foot">
       <button id="dup_create" class="btn primary">Duplicate</button>

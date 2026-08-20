@@ -414,3 +414,7 @@ body {
 
 .sayt-opt.is-taken { opacity: .55; cursor: default; }
 .sayt-opt.is-taken:hover, .sayt-opt.is-taken.active { background: transparent; }
+
+/* Duplicate dialog: the scope hint turns amber when the chosen combination is over the
+   query cap, so the reason for the refusal is visible before the button is pressed. */
+.field-hint.hint-warn { color: #a15c00; font-weight: 600; }
