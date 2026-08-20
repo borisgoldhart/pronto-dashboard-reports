@@ -45,8 +45,11 @@ const TTL_SEC = Math.floor(TTL_MS / 1000);
 const WINDOW = { from: "2022-01-01", to: () => new Date().toISOString().slice(0, 10) };
 const FACET_LIMIT = 20000;
 
-const fileFor = (key) => path.join(config.cacheDir, `.dim-${key}.json`);
-const kvKeyFor = (key) => `dimension:${key}`;
+// Bumped whenever the stored item shape changes, so a deploy can't be left serving
+// last week's cache in an older shape (v2 added each brand's category).
+const CACHE_VERSION = 2;
+const fileFor = (key) => path.join(config.cacheDir, `.dim-${key}.v${CACHE_VERSION}.json`);
+const kvKeyFor = (key) => `dimension:v${CACHE_VERSION}:${key}`;
 
 const mem = new Map();   // key -> { items, fetchedAt }
 
@@ -152,8 +155,8 @@ export async function listDimension(key, { refresh = false, auth = null } = {}) 
  * brands someone is likely to mean are at the top rather than whatever sorts first
  * alphabetically.
  */
-export async function searchDimension(key, q, { limit = 40, auth = null } = {}) {
-  const r = await listDimension(key, { auth });
+export async function searchDimension(key, q, { limit = 40, auth = null, refresh = false } = {}) {
+  const r = await listDimension(key, { auth, refresh });
   if (!r.ok) return r;
   const term = String(q || "").trim().toLowerCase();
   let items = r.items;
