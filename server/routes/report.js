@@ -4,6 +4,7 @@ import {
 } from "../fields.js";
 import * as cache from "../cache.js";
 import { listOffices } from "../offices.js";
+import { searchDimension, isDimension } from "../dimensions.js";
 import { dashboardExists } from "../store.js";
 import { urlsFor, runWidgetQuery } from "../query.js";
 
@@ -19,6 +20,23 @@ router.get("/offices", async (req, res) => {
   const q = String(req.query.q || "").trim().toLowerCase();
   const offices = q ? r.offices.filter((o) => o.toLowerCase().includes(q)) : r.offices;
   res.json({ ok: true, count: offices.length, offices });
+});
+
+/**
+ * Searchable list for a brand dimension: /dimension/brandcat or /dimension/brand.
+ * Returns [{id, name, count}] — the picker shows the name and files the id, because
+ * only the id fields match exactly (see dimensions.js).
+ */
+router.get("/dimension/:key", async (req, res) => {
+  if (!req.pronto || req.pronto.mode === "none") {
+    return res.status(401).json({ ok: false, authRequired: true, error: "Not signed in" });
+  }
+  const key = String(req.params.key || "");
+  if (!isDimension(key)) return res.status(400).json({ ok: false, error: `Unknown dimension: ${key}` });
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 40));
+  const r = await searchDimension(key, req.query.q, { limit, auth: req.pronto?.auth });
+  if (!r.ok) return res.status(r.status || 502).json({ ok: false, error: r.error });
+  res.json({ ok: true, total: r.total, items: r.items });
 });
 
 /** Metadata for the graph-builder UI: the full captured legacy option lists. */
