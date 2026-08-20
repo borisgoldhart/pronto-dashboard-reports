@@ -275,36 +275,76 @@ export function mergeSolrResponses(datas) {
 }
 
 /**
- * Fetch a report, applying an optional multi-office filter. One office filters natively;
- * multiple offices fan out to one filtered query each (the API ANDs same-field filters,
- * so OR isn't possible in a single call) and the results are merged. Each filtered query
- * is also smaller/faster than the unfiltered one.
+ * The scope filters a spec fans out over: offices, brand categories, brands.
+ *
+ * Each is an "any of these values" filter, and the API cannot express that in one call.
+ * Same-field filters are ANDed, and the numeric id fields reject OR syntax outright —
+ * filtering brand_id on "(5586 OR 10789)" comes back as
+ *
+ *     Invalid Number: (5586 OR 10789)
+ *
+ * so an OR across values is only expressible as separate queries whose results are
+ * merged. (The *_name fields do accept `("A" OR "B")` in a single call, but they match
+ * on words rather than on values — a brandcat_name filter of "Havas Life" also matches
+ * "Sun Life" and "SK Life Science" — which is why the picker sends ids.)
+ *
+ * Combining dimensions is a cross product: 2 offices x 3 brands = 6 queries. Each is
+ * narrower than the unfiltered one, but the count still multiplies, hence MAX_COMBOS.
+ */
+export const MAX_COMBOS = 24;
+
+const idsOf = (list) => (list || [])
+  .map((v) => (v && typeof v === "object" ? v.id : v))
+  .filter((v) => v !== null && v !== undefined && String(v).trim() !== "")
+  .map((v) => String(v).trim());
+
+/** Every extra-filter set this spec's scope expands to. Always at least one (possibly empty). */
+export function filterCombos(spec) {
+  const officeField = spec.officeField || officeFieldFor(spec.dataSource);
+  const dims = [
+    (spec.officeFilters || []).filter(Boolean).map((o) => ({ name: officeField, value: o })),
+    idsOf(spec.brandcatFilters).map((id) => ({ name: "brandcat_id", value: id })),
+    idsOf(spec.brandFilters).map((id) => ({ name: "brand_id", value: id })),
+  ];
+  let combos = [[]];
+  for (const options of dims) {
+    if (!options.length) continue;                      // dimension not scoped: leave it open
+    combos = combos.flatMap((c) => options.map((o) => [...c, o]));
+  }
+  return combos;
+}
+
+/**
+ * Fetch a report across every combination of its scope filters, merging the results.
+ * One combination — the common case — is a single plain query.
  */
 export async function fetchReportWithOffices(spec, opts = {}) {
-  const offices = (spec.officeFilters || []).filter(Boolean);
-  const field = spec.officeField || officeFieldFor(spec.dataSource);
-  const withOffice = (office) => ({
-    ...spec,
-    filters: [...(spec.filters || []), ...(office ? [{ name: field, value: office }] : [])],
-  });
+  const combos = filterCombos(spec);
+  const withCombo = (combo) => ({ ...spec, filters: [...(spec.filters || []), ...combo] });
 
-  if (offices.length <= 1) {
-    return fetchReport(withOffice(offices[0]), opts);
+  if (combos.length === 1) return fetchReport(withCombo(combos[0]), opts);
+  if (combos.length > MAX_COMBOS) {
+    return {
+      ok: false,
+      status: 400,
+      error: `This widget's office and brand filters combine into ${combos.length} separate queries `
+        + `(the reporting API can't OR them into one). The limit is ${MAX_COMBOS} — narrow the selection.`,
+    };
   }
   // Fan out with limited concurrency (the backend throttles under heavy parallelism).
   const CONCURRENCY = 2;
-  const results = new Array(offices.length);
+  const results = new Array(combos.length);
   let next = 0;
   async function worker() {
-    while (next < offices.length) {
+    while (next < combos.length) {
       const i = next++;
-      results[i] = await fetchReport(withOffice(offices[i]), opts);
+      results[i] = await fetchReport(withCombo(combos[i]), opts);
     }
   }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, offices.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, combos.length) }, worker));
   const bad = results.find((r) => !r.ok);
   if (bad) return bad;
-  return { ok: true, status: 200, merged: offices.length, data: mergeSolrResponses(results.map((r) => r.data)) };
+  return { ok: true, status: 200, merged: combos.length, data: mergeSolrResponses(results.map((r) => r.data)) };
 }
 
 /**

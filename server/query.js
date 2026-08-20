@@ -1,4 +1,4 @@
-import { fetchReportWithOffices, normalize, buildUrl, mergeSolrResponses } from "./pronto.js";
+import { fetchReportWithOffices, filterCombos, normalize, buildUrl, mergeSolrResponses } from "./pronto.js";
 import { officeFieldFor, DISPLAY_AS, resolveDataSource } from "./fields.js";
 import * as cache from "./cache.js";
 
@@ -11,12 +11,12 @@ import * as cache from "./cache.js";
  * a normal widget render uses — no second implementation to drift.
  */
 
-/** The exact API URL(s) a spec maps to (one per office filter, else one). */
+/** The exact API URL(s) a spec maps to — one per office/brand-category/brand combination.
+ *  Shares filterCombos() with the fetch path so the URLs shown for debugging, and the
+ *  cache keys derived from them, can never describe a different query from the one run. */
 export function urlsFor(spec) {
-  const offices = (spec.officeFilters || []).filter(Boolean);
-  if (!offices.length) return [buildUrl(spec)];
-  const field = spec.officeField || officeFieldFor(spec.dataSource);
-  return offices.map((o) => buildUrl({ ...spec, filters: [...(spec.filters || []), { name: field, value: o }] }));
+  return filterCombos(spec).map((combo) =>
+    buildUrl(combo.length ? { ...spec, filters: [...(spec.filters || []), ...combo] } : spec));
 }
 
 /** normalize() options derived from a widget spec. */
