@@ -1967,9 +1967,13 @@ async function dupDimSearch(key) {
   }
   const chosen = new Set(dim.state().map((x) => String(x.id)));
   const items = (r.items || []).filter((it) => !chosen.has(String(it.id)));
+  // The right-hand note is what separates two brands of the same name — live there are
+  // two DUPIXENTs — so it shows the category and how much work sits under each.
+  const note = (it) => [it.context, it.count ? `${Number(it.count).toLocaleString()} jobs` : ""]
+    .filter(Boolean).join(" · ");
   menu.innerHTML = items.length
     ? items.map((it) => `<div class="office-opt" data-id="${escapeHtml(String(it.id))}" data-name="${escapeHtml(it.name)}">
-        <span>${escapeHtml(it.name)}</span></div>`).join("")
+        <span>${escapeHtml(it.name)}</span><code>${escapeHtml(note(it))}</code></div>`).join("")
     : `<div class="office-loading">No matching ${dim.label}</div>`;
   menu.classList.add("open");
 }

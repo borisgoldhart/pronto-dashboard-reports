@@ -418,3 +418,8 @@ body {
 /* Duplicate dialog: the scope hint turns amber when the chosen combination is over the
    query cap, so the reason for the refusal is visible before the button is pressed. */
 .field-hint.hint-warn { color: #a15c00; font-weight: 600; }
+/* Brand pickers reuse the office menu, with a right-hand note (category · volume) that
+   is what tells two brands of the same name apart. */
+.office-opt { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.office-opt code { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.office-opt:hover code { color: inherit; opacity: .75; }
