@@ -34,7 +34,11 @@ router.get("/dimension/:key", async (req, res) => {
   const key = String(req.params.key || "");
   if (!isDimension(key)) return res.status(400).json({ ok: false, error: `Unknown dimension: ${key}` });
   const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 40));
-  const r = await searchDimension(key, req.query.q, { limit, auth: req.pronto?.auth });
+  // ?refresh=1 rebuilds the cached list — for when brands have been added or renamed in
+  // Pronto and nobody wants to wait out the 7-day cache.
+  const r = await searchDimension(key, req.query.q, {
+    limit, auth: req.pronto?.auth, refresh: req.query.refresh === "1",
+  });
   if (!r.ok) return res.status(r.status || 502).json({ ok: false, error: r.error });
   res.json({ ok: true, total: r.total, items: r.items });
 });
