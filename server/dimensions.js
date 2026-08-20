@@ -20,13 +20,19 @@ import { kvEnabled, jget, jset } from "./kv.js";
  * The pairs come from the index itself rather than from Pronto's own brand API, so the
  * ids are guaranteed to be the ones this index actually holds. One facet query per
  * dimension, grouped by id and sub-grouped by name: ~6s for ~3,900 brands, so it is
- * cached for 7 days exactly like the office list. Live check at build time found no id
- * carrying two different names, i.e. the pairing is 1:1.
+ * cached for 7 days exactly like the office list.
+ *
+ * Names are not unique the other way round, though — live, "DUPIXENT" is two separate
+ * brand ids — so each brand also carries the category it mostly sits under, which is what
+ * the picker shows beside the name to tell two same-named brands apart.
  */
 
 const DIMENSIONS = {
   brandcat: { idField: "brandcat_id", nameField: "brandcat_name", label: "Brand Category" },
-  brand: { idField: "brand_id", nameField: "brand_name", label: "Brand" },
+  // Brand names are NOT unique: live, "DUPIXENT" is two different brand ids (22,736 jobs
+  // and 1,126). Two identical rows in a picker is a coin toss, so each brand also carries
+  // the category it sits under, fetched the same way.
+  brand: { idField: "brand_id", nameField: "brand_name", label: "Brand", contextField: "brandcat_name" },
 };
 
 export const isDimension = (key) => Object.hasOwn(DIMENSIONS, key);
@@ -72,31 +78,53 @@ async function writeCache(key, items) {
   } catch {}
 }
 
-/** One facet query: ids as the group, names as the sub-group, so each bucket pairs them. */
-async function fetchPairs(dim, auth) {
-  const r = await fetchReport({
+/** One facet query: ids as the group, some name field as the sub-group, paired per bucket. */
+async function facetBy(dim, subField, auth) {
+  return fetchReport({
     dataSource: "job",
     groupBy: dim.idField,
-    subGroup: dim.nameField,
+    subGroup: subField,
     interval: "0",
     displayAs: "count",
     dateFrom: WINDOW.from,
     dateTo: WINDOW.to(),
     limit: FACET_LIMIT,
   }, { timeoutMs: 120000, auth });
+}
+
+/** The busiest sub-group value in a bucket — an id filed under two spellings should show
+ *  the one it mostly carries rather than being dropped or picked at random. */
+const topSub = (b) => (b.facet?.buckets || []).slice().sort((x, y) => (y.count || 0) - (x.count || 0))[0]?.val;
+
+async function fetchPairs(dim, auth) {
+  const r = await facetBy(dim, dim.nameField, auth);
   if (!r.ok) return { ok: false, error: r.error, status: r.status };
+
+  // What each id sits under, so two brands of the same name can be told apart.
+  let context = null;
+  if (dim.contextField) {
+    const c = await facetBy(dim, dim.contextField, auth);
+    if (c.ok) {
+      context = new Map();
+      for (const b of c.data?.facets?.group?.buckets || []) {
+        const v = topSub(b);
+        if (b.val != null && v) context.set(String(b.val), String(v));
+      }
+    }
+  }
 
   const buckets = r.data?.facets?.group?.buckets || [];
   const items = [];
   for (const b of buckets) {
     const id = b.val;
-    // The sub-group's busiest bucket is the name: an id with two spellings (a rename
-    // mid-history) would otherwise be dropped entirely, which is worse than showing
-    // the one it is filed under most often.
-    const names = (b.facet?.buckets || []).slice().sort((x, y) => (y.count || 0) - (x.count || 0));
-    const name = names[0]?.val;
+    const name = topSub(b);
     if (id == null || !name) continue;
-    items.push({ id: String(id), name: String(name), count: Number(b.count) || 0 });
+    items.push({
+      id: String(id),
+      name: String(name),
+      count: Number(b.count) || 0,
+      ...(context?.get(String(id)) ? { context: context.get(String(id)) } : {}),
+    });
   }
   items.sort((a, b) => a.name.localeCompare(b.name));
   return { ok: true, items };
