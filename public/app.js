@@ -522,16 +522,36 @@ function buildOption(norm, chartType, spec, theme, width = 800, widget = null, h
         if (!ps || !ps.length) return "";
         const label = String(ps[0].axisValueLabel ?? ps[0].name);
         const line = ps.find((p) => p.seriesName === ovName);
+        const bars = ps.filter((p) => p.seriesName !== ovName);
         const dot = (c) => `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c};margin-right:6px"></span>`;
+        const head = `<div style="font-weight:700;margin-bottom:3px">${escapeHtml(label)}</div>`;
         const lineRow = (leading) => `<div style="${leading}color:${OVERLAY_COLOR}">${dot(OVERLAY_COLOR)}${escapeHtml(ovName)}: <b>${
           line && line.value !== null && line.value !== undefined ? money(line.value) : "no data"}</b></div>`;
 
         if (line && onOverlayLine(widget, ps[0].dataIndex, line.value, horizontal)) {
-          return `<div style="font-weight:700;margin-bottom:3px">${escapeHtml(label)}</div>${lineRow("")}`;
+          return `${head}${lineRow("")}`;
         }
-        let html = `<div style="font-weight:700;margin-bottom:3px">${escapeHtml(label)}</div>`;
-        html += ps.filter((p) => p.seriesName !== ovName)
-          .map((p) => `${dot(p.color)}${escapeHtml(p.seriesName)}: <b>${money(p.value)}</b>`).join("<br/>");
+
+        // A stack of twenty brands listed in full is a wall of numbers, most of them
+        // zero, and it hides the one the cursor is actually on. So name that one —
+        // the way the pie does — with its share of the column for context.
+        const hit = hoveredSeries(widget, bars, { horizontal, stacked });
+        let html = head;
+        if (hit) {
+          const total = bars.reduce((a, p) => a + (Number(p.value) || 0), 0);
+          const pct = total > 0 ? Math.round(((Number(hit.value) || 0) / total) * 1000) / 10 : null;
+          html += `<div>${dot(hit.color)}${escapeHtml(hit.seriesName)}: <b>${money(hit.value)}</b>${
+            pct === null ? "" : ` <span style="color:#7c8794">(${pct}% of ${money(total)})</span>`}</div>`;
+        } else if (stacked || bars.every((p) => p.seriesType === "bar")) {
+          // Above the top of the column (or between grouped bars) there is no segment to
+          // name, so give the column's own total rather than falling back to the wall.
+          const total = bars.reduce((a, p) => a + (Number(p.value) || 0), 0);
+          html += `<div><b>${money(total)}</b> <span style="color:#7c8794">across ${bars.length} series — hover a band to name it</span></div>`;
+        } else {
+          // Plain (unstacked) lines: comparing them at one moment is the point, so the
+          // whole set stays.
+          html += bars.map((p) => `${dot(p.color)}${escapeHtml(p.seriesName)}: <b>${money(p.value)}</b>`).join("<br/>");
+        }
         if (line) html += lineRow("margin-top:5px;padding-top:5px;border-top:1px solid #e2e7ec;");
         return html;
       },
@@ -560,6 +580,45 @@ function distToSegment(p, a, b) {
   const len2 = vx * vx + vy * vy;
   const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2)) : 0;
   return Math.hypot(p.x - (a.x + t * vx), p.y - (a.y + t * vy));
+}
+
+/**
+ * Which series the pointer is actually inside, or null.
+ *
+ * Two ways, because the two chart shapes fail differently:
+ *
+ * - Stacked: measured, not asked for. The pointer's own position is converted back into
+ *   a value and matched against the running total of the column, which is exact and
+ *   doesn't depend on ECharts having dispatched a hover event before the tooltip asked.
+ *   It also skips the zero-height bands nothing can hover, which is most of them on a
+ *   twenty-brand chart.
+ * - Grouped bars side by side: ECharts' own hit test is authoritative there, so the
+ *   segment it reports on mouseover is used, guarded to the column being described.
+ */
+function hoveredSeries(widget, bars, { horizontal, stacked }) {
+  if (!widget || !widget.chart || !bars || !bars.length) return null;
+  if (bars.length === 1) return bars[0];
+  const chart = widget.chart;
+
+  const hit = widget._hoverItem;
+  if (hit && hit.dataIndex === bars[0].dataIndex) {
+    const m = bars.find((p) => p.seriesIndex === hit.seriesIndex);
+    if (m) return m;
+  }
+  if (!stacked || !widget._pointer) return null;
+
+  try {
+    const along = horizontal ? widget._pointer.x : widget._pointer.y;
+    const val = chart.convertFromPixel({ [horizontal ? "xAxisIndex" : "yAxisIndex"]: 0 }, along);
+    if (!isFinite(val) || val < 0) return null;
+    let cum = 0;
+    for (const p of [...bars].sort((a, b) => a.seriesIndex - b.seriesIndex)) {
+      const v = Number(p.value) || 0;
+      if (v > 0 && val >= cum && val < cum + v) return p;
+      cum += v;
+    }
+  } catch { return null; }
+  return null;
 }
 
 /**
@@ -1069,6 +1128,16 @@ async function renderWidget(w, { nocache = false } = {}) {
       // convertToPixel returns too.
       w._pointer = { x: 0, y: 0 };
       w.chart.getZr().on("mousemove", (e) => { w._pointer.x = e.offsetX; w._pointer.y = e.offsetY; });
+      // Which bar the mouse is over according to ECharts itself — the tooltip uses it to
+      // name one segment instead of listing the whole column. See hoveredSeries().
+      w._hoverItem = null;
+      w.chart.on("mouseover", (e) => {
+        if (e && e.componentType === "series" && typeof e.dataIndex === "number") {
+          w._hoverItem = { seriesIndex: e.seriesIndex, dataIndex: e.dataIndex };
+        }
+      });
+      w.chart.on("mouseout", () => { w._hoverItem = null; });
+      w.chart.getZr().on("globalout", () => { w._hoverItem = null; });
       w.chart.on("datazoom", () => {
         if (!w.spec || PUBLIC_VIEW || SNAPSHOT_ID) return;
         const dz = (w.chart.getOption().dataZoom || [])[0];
